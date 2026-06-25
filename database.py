@@ -36,6 +36,7 @@ class Database:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 block_number INTEGER,
+                question_index INTEGER,
                 question TEXT,
                 answer TEXT,
                 answered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -110,14 +111,14 @@ class Database:
         conn.commit()
         conn.close()
 
-    def save_survey_response(self, user_id: int, block_number: int, question: str, answer: str):
+    def save_survey_response(self, user_id: int, block_number: int, question_index: int, question: str, answer: str):
         """Save survey response"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO survey_responses (user_id, block_number, question, answer)
-            VALUES (?, ?, ?, ?)
-        """, (user_id, block_number, question, answer))
+            INSERT INTO survey_responses (user_id, block_number, question_index, question, answer)
+            VALUES (?, ?, ?, ?, ?)
+        """, (user_id, block_number, question_index, question, answer))
         conn.commit()
         conn.close()
 

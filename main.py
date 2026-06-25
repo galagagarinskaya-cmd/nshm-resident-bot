@@ -199,7 +199,7 @@ async def handle_survey_answer(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if block in SURVEY_BLOCKS:
         question = SURVEY_BLOCKS[block]["questions"][question_idx]
-        db.save_survey_response(user.id, block, question, message.text)
+        db.save_survey_response(user.id, block, question_idx, question, message.text)
 
     # Show next question
     keyboard = [
@@ -324,6 +324,11 @@ async def show_survey_complete(update: Update, context: ContextTypes.DEFAULT_TYP
     # Mark as completed
     db.set_user_state(user_id, "survey_complete")
 
+    # Sync to sheets
+    responses = db.get_survey_responses(user_id)
+    if responses:
+        sheets.sync_survey_responses(user_id, responses)
+
     # Notify admins
     user_info = db.get_user(user_id)
     admin_msg = f"✅ Резидент завершил опрос:\n👤 {user_info['first_name']} {user_info.get('last_name', '')}\n🆔 ID: {user_id}"
@@ -333,8 +338,6 @@ async def show_survey_complete(update: Update, context: ContextTypes.DEFAULT_TYP
             await context.bot.send_message(chat_id=admin_id, text=admin_msg)
         except TelegramError as e:
             logger.error(f"Error sending admin notification: {e}")
-
-    # Sync to sheets (TODO)
 
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle all messages"""

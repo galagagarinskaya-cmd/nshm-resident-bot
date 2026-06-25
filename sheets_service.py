@@ -1,27 +1,29 @@
 import os
-import json
-from google.auth.transport.requests import Request
+import logging
 from google.oauth2.service_account import Credentials
 from google.api_python_client import discovery
 from config import SHEETS_ID
-from typing import List, Dict
+from typing import List, Dict, Optional
+from database import Database
+
+logger = logging.getLogger(__name__)
 
 class SheetsService:
     def __init__(self, credentials_path: str = None):
         self.sheets_id = SHEETS_ID
         self.service = None
+        self.db = Database()
         self.init_service(credentials_path)
 
     def init_service(self, credentials_path: str = None):
         """Initialize Google Sheets API service"""
         if credentials_path is None:
-            # Если файл не существует, создаём из JSON строки из Downloads
-            cred_file = "/Users/gala/Downloads/nshm-residents-debd808b5d67.json"
+            cred_file = "credentials.json"
             if os.path.exists(cred_file):
                 credentials_path = cred_file
 
         if not credentials_path or not os.path.exists(credentials_path):
-            print("WARNING: Google Sheets credentials not found. Some features will be disabled.")
+            logger.warning("Google Sheets credentials not found. Some features will be disabled.")
             return
 
         try:
@@ -30,10 +32,11 @@ class SheetsService:
                 scopes=['https://www.googleapis.com/auth/spreadsheets']
             )
             self.service = discovery.build('sheets', 'v4', credentials=creds)
+            logger.info("Google Sheets API initialized successfully")
         except Exception as e:
-            print(f"Error initializing Sheets service: {e}")
+            logger.error(f"Error initializing Sheets service: {e}")
 
-    def get_rules(self) -> Dict[str, str]:
+    def get_rules(self) -> Dict[str, Dict]:
         """Get rules blocks from 'Правила' sheet"""
         if not self.service:
             return {}
@@ -45,24 +48,26 @@ class SheetsService:
             ).execute()
 
             values = result.get('values', [])
-            if not values:
+            if not values or len(values) <= 1:
                 return {}
 
             rules = {}
-            for row in values[1:]:  # Skip header
+            for row in values[1:]:
                 if len(row) >= 3:
-                    block_num = row[0]
-                    title = row[1]
-                    text = row[2]
-                    rules[block_num] = {"title": title, "text": text}
+                    block_num = str(row[0]).strip()
+                    title = str(row[1]).strip() if len(row) > 1 else ""
+                    text = str(row[2]).strip() if len(row) > 2 else ""
+                    if block_num and title and text:
+                        rules[block_num] = {"title": title, "text": text}
 
+            logger.info(f"Loaded {len(rules)} rule blocks")
             return rules
         except Exception as e:
-            print(f"Error getting rules: {e}")
+            logger.error(f"Error getting rules: {e}")
             return {}
 
-    def get_content(self) -> Dict[str, str]:
-        """Get content (welcome messages, circles, etc) from 'Контент' sheet"""
+    def get_content(self) -> Dict[str, Dict]:
+        """Get content (welcome messages, circles) from 'Контент' sheet"""
         if not self.service:
             return {}
 
@@ -73,141 +78,58 @@ class SheetsService:
             ).execute()
 
             values = result.get('values', [])
-            if not values:
+            if not values or len(values) <= 1:
                 return {}
 
             content = {}
-            for row in values[1:]:  # Skip header
+            for row in values[1:]:
                 if len(row) >= 3:
-                    block = row[0]
-                    content_id = row[1]
-                    text = row[2]
-                    content[content_id] = {"block": block, "text": text}
+                    block = str(row[0]).strip() if len(row) > 0 else ""
+                    content_id = str(row[1]).strip() if len(row) > 1 else ""
+                    text = str(row[2]).strip() if len(row) > 2 else ""
+                    if content_id and text:
+                        content[content_id] = {"block": block, "text": text}
 
+            logger.info(f"Loaded {len(content)} content items")
             return content
         except Exception as e:
-            print(f"Error getting content: {e}")
+            logger.error(f"Error getting content: {e}")
             return {}
 
-    def get_survey_questions(self) -> Dict[int, List[Dict]]:
-        """Get survey questions from 'Опрос' sheet"""
+    def find_resident_row_by_name(self, first_name: str, last_name: str) -> Optional[int]:
+        """Find resident row by first and last name"""
         if not self.service:
-            return {}
+            return None
 
         try:
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=self.sheets_id,
-                range="Опрос!A:C"
+                range="Резиденты!A:C"
             ).execute()
 
             values = result.get('values', [])
             if not values:
-                return {}
+                return None
 
-            questions = {}
-            for row in values[1:]:  # Skip header
+            for idx, row in enumerate(values[1:], 2):  # Start from row 2 (skip header)
                 if len(row) >= 3:
-                    block_num = int(row[0])
-                    question = row[1]
-                    question_type = row[2]  # text, choice, etc
+                    sheet_first = str(row[1]).strip().lower() if len(row) > 1 else ""
+                    sheet_last = str(row[2]).strip().lower() if len(row) > 2 else ""
+                    if sheet_first == first_name.lower() and sheet_last == last_name.lower():
+                        return idx
 
-                    if block_num not in questions:
-                        questions[block_num] = []
-
-                    questions[block_num].append({
-                        "question": question,
-                        "type": question_type
-                    })
-
-            return questions
+            return None
         except Exception as e:
-            print(f"Error getting survey questions: {e}")
-            return {}
+            logger.error(f"Error finding resident: {e}")
+            return None
 
-    def update_resident(self, row_number: int, data: Dict[str, str]):
-        """Update resident data in main sheet"""
+    def add_resident_row(self, first_name: str, last_name: str) -> Optional[int]:
+        """Add new resident row and return row number"""
         if not self.service:
-            return
+            return None
 
         try:
-            # Map data to columns
-            columns = {
-                "name": "B",
-                "last_name": "C",
-                "region": "D",
-                "vk_profile": "E",
-                "telegram_nick": "F",
-                "participated_events": "G",
-                "activity": "H",
-                "birthday": "I",
-                "phone": "J",
-                "education": "K",
-                "profession": "L",
-                "work_status": "M",
-                "workplace": "N",
-                "blog_link": "O",
-                "participation_history": "P",
-                "community_goal": "Q",
-                "ambassador": "R",
-                "missing_knowledge": "S",
-                "needed_course": "T",
-                "tg_channels": "U",
-                "youtube_channels": "V",
-                "vk_communities": "W",
-                "artists": "X",
-                "news_sources": "Y",
-                "bloggers": "Z",
-                "social_networks": "AA"
-            }
-
-            updates = []
-            for key, col in columns.items():
-                if key in data:
-                    cell_range = f"Резиденты!{col}{row_number}"
-                    updates.append({
-                        "range": cell_range,
-                        "values": [[data[key]]]
-                    })
-
-            if updates:
-                body = {"data": updates}
-                self.service.spreadsheets().values().batchUpdate(
-                    spreadsheetId=self.sheets_id,
-                    body=body
-                ).execute()
-        except Exception as e:
-            print(f"Error updating resident: {e}")
-
-    def find_resident_row(self, full_name: str) -> int:
-        """Find resident row by full name"""
-        if not self.service:
-            return -1
-
-        try:
-            result = self.service.spreadsheets().values().get(
-                spreadsheetId=self.sheets_id,
-                range="Резиденты!B:C"
-            ).execute()
-
-            values = result.get('values', [])
-            for idx, row in enumerate(values, 1):
-                if len(row) >= 2:
-                    name_cell = f"{row[0]} {row[1]}"
-                    if name_cell.lower() == full_name.lower():
-                        return idx + 1  # +1 for 1-indexing and header
-
-            return -1
-        except Exception as e:
-            print(f"Error finding resident: {e}")
-            return -1
-
-    def add_new_resident(self, data: Dict[str, str]):
-        """Add new resident to sheet"""
-        if not self.service:
-            return
-
-        try:
-            # Get the next empty row
+            # Get current data to find next empty row
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=self.sheets_id,
                 range="Резиденты!A:A"
@@ -216,30 +138,49 @@ class SheetsService:
             values = result.get('values', [])
             next_row = len(values) + 1
 
-            # Prepare data for all columns
-            row_data = [""] * 27  # A to AA
-            row_data[1] = data.get("name", "")  # B
-            row_data[2] = data.get("last_name", "")  # C
-            # ... more mappings
+            # Prepare row data
+            row_data = ["", first_name, last_name]  # A (ID), B (Имя), C (Фамилия)
 
+            # Insert the row
             self.service.spreadsheets().values().update(
                 spreadsheetId=self.sheets_id,
-                range=f"Резиденты!A{next_row}:AA{next_row}",
+                range=f"Резиденты!A{next_row}:C{next_row}",
                 valueInputOption="RAW",
                 body={"values": [row_data]}
             ).execute()
-        except Exception as e:
-            print(f"Error adding resident: {e}")
 
-    def sync_survey_response(self, user_id: int, responses: list):
-        """Sync survey responses to sheets"""
-        if not self.service:
-            return
+            logger.info(f"Added new resident row {next_row}: {first_name} {last_name}")
+            return next_row
+        except Exception as e:
+            logger.error(f"Error adding resident row: {e}")
+            return None
+
+    def sync_survey_responses(self, user_id: int, responses: List[Dict]) -> bool:
+        """Sync survey responses to resident row"""
+        if not self.service or not responses:
+            return False
 
         try:
-            # Map survey blocks to column names
+            user_info = self.db.get_user(user_id)
+            if not user_info:
+                logger.error(f"User {user_id} not found in database")
+                return False
+
+            first_name = user_info.get("first_name", "")
+            last_name = user_info.get("last_name", "")
+
+            # Find or create resident row
+            row_num = self.find_resident_row_by_name(first_name, last_name)
+            if not row_num:
+                row_num = self.add_resident_row(first_name, last_name)
+
+            if not row_num:
+                logger.error(f"Could not find or create row for {first_name} {last_name}")
+                return False
+
+            # Map survey responses to columns
             column_map = {
-                1: {  # Блок ID
+                1: {  # Блок 1: Твоё ID
                     0: "B",  # Имя
                     1: "I",  # День рождения
                     2: "J",  # Телефон
@@ -247,19 +188,19 @@ class SheetsService:
                     4: "E",  # Профиль в ВК
                     5: "D"   # Регион
                 },
-                2: {  # Блок Учеба и работа
-                    0: "K",  # Образование
+                2: {  # Блок 2: Учеба и работа
+                    0: "K",  # Учеба
                     1: "L",  # Профессия
                     2: "M",  # Статус работы
                     3: "N",  # Место работы
                     4: "O"   # Ссылка на блог
                 },
-                3: {  # Блок НШМ
+                3: {  # Блок 3: НШМ фон
                     0: "G",  # Участник каких меро
                     1: "Q",  # Цель в комьюнити
-                    2: "R"   # Амбассадор (советую проект)
+                    2: "R"   # Амбассадор
                 },
-                4: {  # Блок Вайб
+                4: {  # Блок 4: Вайб
                     0: "Y",  # Новости
                     1: "Z",  # Блогеры
                     2: "AA", # Соцсети
@@ -268,31 +209,38 @@ class SheetsService:
                     5: "W",  # Группы в VK
                     6: "X"   # Исполнители
                 },
-                5: {  # Блок Level Up
-                    0: "S",  # Знания, которых не хватило
+                5: {  # Блок 5: Level Up
+                    0: "S",  # Знания не хватило
                     1: "T"   # Нужная тема курса
                 }
             }
 
+            # Collect updates
             updates = []
             for response in responses:
                 block = response["block_number"]
+                q_idx = response.get("question_index", 0)
                 answer = response["answer"]
 
-                if block in column_map:
-                    # Find row for this user (by ФИО or other identifier)
-                    # For now, we'll just add the update
-                    # In production, you'd need to find the actual row number
-                    pass
+                if block in column_map and q_idx in column_map[block]:
+                    col = column_map[block][q_idx]
+                    cell_range = f"Резиденты!{col}{row_num}"
+                    updates.append({
+                        "range": cell_range,
+                        "values": [[answer]]
+                    })
 
-            # Execute batch update if there are updates
+            # Execute batch update
             if updates:
                 body = {"data": updates}
                 self.service.spreadsheets().values().batchUpdate(
                     spreadsheetId=self.sheets_id,
                     body=body
                 ).execute()
-                print(f"Synced {len(updates)} responses for user {user_id}")
+                logger.info(f"Synced {len(updates)} responses for user {user_id} (row {row_num})")
+                return True
 
+            return True
         except Exception as e:
-            print(f"Error syncing survey response: {e}")
+            logger.error(f"Error syncing survey responses: {e}")
+            return False
