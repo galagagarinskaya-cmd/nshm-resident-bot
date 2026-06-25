@@ -1,7 +1,7 @@
 import os
 import logging
 from google.oauth2.service_account import Credentials
-from google.api_python_client import discovery
+from googleapiclient import discovery
 from config import SHEETS_ID
 from typing import List, Dict, Optional
 from database import Database
