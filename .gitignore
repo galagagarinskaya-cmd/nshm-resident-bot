@@ -1,0 +1,13 @@
+.env
+.env.local
+credentials.json
+*.db
+__pycache__/
+*.py[cod]
+*$py.class
+.DS_Store
+.venv
+venv/
+env/
+*.log
+.idea/
