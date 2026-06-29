@@ -63,47 +63,68 @@ async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_
 
         user_id = user.id
 
-        # Add user to database
+        # Add user to database if not exists
         db.add_or_update_user(user_id, user.username, user.first_name, user.last_name)
 
-        # Block user from writing until rules are accepted
-        try:
-            await context.bot.restrict_chat_member(
-                chat_id=TELEGRAM_CHAT_ID,
-                user_id=user_id,
-                permissions=ChatPermissions(
-                    can_send_messages=False,
-                    can_send_media_messages=False,
-                    can_send_other_messages=False,
-                    can_add_web_page_previews=False
+        # Check if user already accepted rules
+        user_info = db.get_user(user_id)
+        if user_info and user_info["rules_accepted"]:
+            # User already accepted rules - unlock immediately
+            try:
+                await context.bot.restrict_chat_member(
+                    chat_id=TELEGRAM_CHAT_ID,
+                    user_id=user_id,
+                    permissions=ChatPermissions(
+                        can_send_messages=True,
+                        can_send_media_messages=True
+                    )
                 )
-            )
-            logger.info(f"Restricted new member {user_id} until rules accepted")
-        except TelegramError as e:
-            logger.error(f"Error restricting new member {user_id}: {e}")
+                logger.info(f"Unlocked returning resident {user_id} (already accepted rules)")
 
-        # Send welcome message in DM
-        try:
-            welcome_text = """Приветик! Поздравляем, теперь ты в комьюнити самых крутых зумеров в медиа 🫶
+                # Send welcome back message
+                welcome_back = "Привет! 👋 Рады видеть тебя снова в комьюнити! 🫶\n\nТвой статус: Резидент ✅"
+                await context.bot.send_message(chat_id=user_id, text=welcome_back)
+            except TelegramError as e:
+                logger.error(f"Error unlocking returning resident {user_id}: {e}")
+        else:
+            # New user or hasn't accepted rules yet - block and send welcome
+            try:
+                await context.bot.restrict_chat_member(
+                    chat_id=TELEGRAM_CHAT_ID,
+                    user_id=user_id,
+                    permissions=ChatPermissions(
+                        can_send_messages=False,
+                        can_send_media_messages=False,
+                        can_send_other_messages=False,
+                        can_add_web_page_previews=False
+                    )
+                )
+                logger.info(f"Restricted new/returning member {user_id} until rules accepted")
+            except TelegramError as e:
+                logger.error(f"Error restricting new member {user_id}: {e}")
+
+            # Send welcome message in DM
+            try:
+                welcome_text = """Приветик! Поздравляем, теперь ты в комьюнити самых крутых зумеров в медиа 🫶
 
 Скорее читай про сообщество и треки в комьюнити, а затем изучай карточки ниже, где подробно описали, "что здесь можно, нужно и нельзя делать"
 
 Для продолжения нажми кнопку ниже 👇"""
 
-            keyboard = [[InlineKeyboardButton("Давайте начнём!", callback_data="start_rules")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+                keyboard = [[InlineKeyboardButton("Давайте начнём!", callback_data="start_rules")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=welcome_text,
-                reply_markup=reply_markup
-            )
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=welcome_text,
+                    reply_markup=reply_markup
+                )
 
-            # Set user state
-            db.set_user_state(user_id, BotState.WELCOME)
-            logger.info(f"Sent welcome message to new member {user_id}")
-        except TelegramError as e:
-            logger.error(f"Error sending welcome message to {user_id}: {e}")
+                # Set user state
+                db.set_user_state(user_id, BotState.WELCOME)
+                logger.info(f"Sent welcome message to new member {user_id}")
+            except TelegramError as e:
+                logger.error(f"Error sending welcome message to {user_id}: {e}")
 
 async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command from new member"""
