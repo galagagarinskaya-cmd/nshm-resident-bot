@@ -266,7 +266,7 @@ async def accept_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # All rules accepted
         db.accept_rules(user_id)
 
-        # Unlock user in chat - open all permissions
+        # Unlock user in chat - open all permissions including topics/threads
         try:
             await context.bot.restrict_chat_member(
                 chat_id=TELEGRAM_CHAT_ID,
@@ -282,7 +282,8 @@ async def accept_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     can_send_photos=True,
                     can_send_video_notes=True,
                     can_send_voice_notes=True,
-                    can_send_videos=True
+                    can_send_videos=True,
+                    can_manage_topics=True
                 )
             )
             logger.info(f"Unlocked user {user_id} after accepting rules")
