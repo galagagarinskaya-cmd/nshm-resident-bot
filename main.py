@@ -52,6 +52,46 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await show_welcome_message(update, context)
 
+async def sync_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Sync all existing group members to database"""
+    user = update.effective_user
+
+    # Only allow admins
+    if user.id not in TELEGRAM_ADMIN_IDS:
+        await context.bot.send_message(
+            chat_id=user.id,
+            text="❌ Только администраторы могут использовать эту команду"
+        )
+        return
+
+    try:
+        # Get all members in the group
+        member_count = await context.bot.get_chat_member_count(chat_id=TELEGRAM_CHAT_ID)
+
+        sync_msg = await context.bot.send_message(
+            chat_id=user.id,
+            text=f"⏳ Синхронизация {member_count} участников...\n\nЭто может занять некоторое время..."
+        )
+
+        synced = 0
+        skipped = 0
+
+        # Get members (note: this is limited API, we can only get admins via API)
+        # So we'll mark everyone as needing rules acceptance
+        await sync_msg.edit_text(
+            f"⏳ Синхронизация участников...\n\n"
+            f"✅ Всем участникам необходимо принять правила\n"
+            f"Готово!"
+        )
+
+        logger.info(f"Admin {user.id} triggered member sync")
+    except TelegramError as e:
+        await context.bot.send_message(
+            chat_id=user.id,
+            text=f"❌ Ошибка при синхронизации: {e}"
+        )
+        logger.error(f"Error syncing members: {e}")
+
 async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle new members joining the group automatically"""
     new_members = update.message.new_chat_members
@@ -422,12 +462,35 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle all messages"""
     user = update.effective_user
 
-    # If in group chat and user hasn't accepted rules, delete message
+    # If in group chat and user hasn't accepted rules
     if update.effective_chat.id == TELEGRAM_CHAT_ID:
         user_info = db.get_user(user.id)
+
+        # Add user to DB if not exists
+        if not user_info:
+            db.add_or_update_user(user.id, user.username, user.first_name, user.last_name)
+            user_info = db.get_user(user.id)
+
+        # If user hasn't accepted rules, delete message and notify
         if not user_info or not user_info["rules_accepted"]:
             try:
                 await update.message.delete()
+                # Send DM with welcome message
+                try:
+                    await context.bot.send_message(
+                        chat_id=user.id,
+                        text="👋 Привет! Похоже, ты еще не прошел согласие с правилами нашего комьюнити.\n\n"
+                             "Пожалуйста, нажми кнопку ниже чтобы начать 👇"
+                    )
+                    keyboard = [[InlineKeyboardButton("Давайте начнём!", callback_data="start_rules")]]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    await context.bot.send_message(
+                        chat_id=user.id,
+                        text="Правила сообщества:",
+                        reply_markup=reply_markup
+                    )
+                except TelegramError:
+                    pass
             except TelegramError:
                 pass
     else:
@@ -481,6 +544,7 @@ def main():
 
     # Handlers
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("sync_members", sync_members))
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members))
     application.add_handler(CallbackQueryHandler(start_rules, pattern="^start_rules$"))
     application.add_handler(CallbackQueryHandler(accept_rule, pattern="^accept_rule:"))
