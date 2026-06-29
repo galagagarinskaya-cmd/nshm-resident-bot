@@ -52,10 +52,66 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await show_welcome_message(update, context)
 
+async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle new members joining the group automatically"""
+    new_members = update.message.new_chat_members
+
+    for user in new_members:
+        # Skip if bot itself
+        if user.is_bot:
+            continue
+
+        user_id = user.id
+
+        # Add user to database
+        db.add_or_update_user(user_id, user.username, user.first_name, user.last_name)
+
+        # Block user from writing until rules are accepted
+        try:
+            await context.bot.restrict_chat_member(
+                chat_id=TELEGRAM_CHAT_ID,
+                user_id=user_id,
+                permissions=ChatPermissions(
+                    can_send_messages=False,
+                    can_send_media_messages=False,
+                    can_send_other_messages=False,
+                    can_add_web_page_previews=False
+                )
+            )
+            logger.info(f"Restricted new member {user_id} until rules accepted")
+        except TelegramError as e:
+            logger.error(f"Error restricting new member {user_id}: {e}")
+
+        # Send welcome message in DM
+        try:
+            welcome_text = """Приветик! Поздравляем, теперь ты в комьюнити самых крутых зумеров в медиа 🫶
+
+Скорее читай про сообщество и треки в комьюнити, а затем изучай карточки ниже, где подробно описали, "что здесь можно, нужно и нельзя делать"
+
+Для продолжения нажми кнопку ниже 👇"""
+
+            keyboard = [[InlineKeyboardButton("Давайте начнём!", callback_data="start_rules")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=welcome_text,
+                reply_markup=reply_markup
+            )
+
+            # Set user state
+            db.set_user_state(user_id, BotState.WELCOME)
+            logger.info(f"Sent welcome message to new member {user_id}")
+        except TelegramError as e:
+            logger.error(f"Error sending welcome message to {user_id}: {e}")
+
 async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle new members joining the group"""
+    """Handle /start command from new member"""
     user = update.effective_user
     user_id = user.id
+
+    # Add or update user in DB
+    db.add_or_update_user(user_id, user.username, user.first_name, user.last_name)
 
     # Block user from writing until rules are accepted
     try:
@@ -64,7 +120,9 @@ async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id=user_id,
             permissions=ChatPermissions(
                 can_send_messages=False,
-                can_send_media_messages=False
+                can_send_media_messages=False,
+                can_send_other_messages=False,
+                can_add_web_page_previews=False
             )
         )
     except TelegramError as e:
@@ -402,6 +460,7 @@ def main():
 
     # Handlers
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members))
     application.add_handler(CallbackQueryHandler(start_rules, pattern="^start_rules$"))
     application.add_handler(CallbackQueryHandler(accept_rule, pattern="^accept_rule:"))
     application.add_handler(CallbackQueryHandler(start_survey, pattern="^start_survey$"))
