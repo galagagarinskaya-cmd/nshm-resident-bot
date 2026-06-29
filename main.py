@@ -115,7 +115,14 @@ async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_
                     can_send_messages=False,
                     can_send_media_messages=False,
                     can_send_other_messages=False,
-                    can_add_web_page_previews=False
+                    can_add_web_page_previews=False,
+                    can_send_polls=False,
+                    can_send_audios=False,
+                    can_send_documents=False,
+                    can_send_photos=False,
+                    can_send_video_notes=False,
+                    can_send_voice_notes=False,
+                    can_send_videos=False
                 )
             )
             logger.info(f"Restricted member {user_id} (must accept rules)")
@@ -162,7 +169,14 @@ async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 can_send_messages=False,
                 can_send_media_messages=False,
                 can_send_other_messages=False,
-                can_add_web_page_previews=False
+                can_add_web_page_previews=False,
+                can_send_polls=False,
+                can_send_audios=False,
+                can_send_documents=False,
+                can_send_photos=False,
+                can_send_video_notes=False,
+                can_send_voice_notes=False,
+                can_send_videos=False
             )
         )
     except TelegramError as e:
@@ -252,16 +266,26 @@ async def accept_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # All rules accepted
         db.accept_rules(user_id)
 
-        # Unlock user in chat
+        # Unlock user in chat - open all permissions
         try:
             await context.bot.restrict_chat_member(
                 chat_id=TELEGRAM_CHAT_ID,
                 user_id=user_id,
                 permissions=ChatPermissions(
                     can_send_messages=True,
-                    can_send_media_messages=True
+                    can_send_media_messages=True,
+                    can_send_other_messages=True,
+                    can_add_web_page_previews=True,
+                    can_send_polls=True,
+                    can_send_audios=True,
+                    can_send_documents=True,
+                    can_send_photos=True,
+                    can_send_video_notes=True,
+                    can_send_voice_notes=True,
+                    can_send_videos=True
                 )
             )
+            logger.info(f"Unlocked user {user_id} after accepting rules")
         except TelegramError as e:
             logger.error(f"Error unlocking user: {e}")
 
