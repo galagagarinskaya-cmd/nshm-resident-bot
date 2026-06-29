@@ -545,10 +545,10 @@ def main():
     global scheduler
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # Handlers
+    # Handlers - NEW_CHAT_MEMBERS must be first!
+    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members))
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("sync_members", sync_members))
-    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members))
     application.add_handler(CallbackQueryHandler(start_rules, pattern="^start_rules$"))
     application.add_handler(CallbackQueryHandler(accept_rule, pattern="^accept_rule:"))
     application.add_handler(CallbackQueryHandler(start_survey, pattern="^start_survey$"))
