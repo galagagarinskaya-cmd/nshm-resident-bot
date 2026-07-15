@@ -12,6 +12,15 @@ logger = logging.getLogger(__name__)
 db = Database()
 sheets = SheetsService()
 
+# Видео кружков перед каждым блоком
+CIRCLE_VIDEOS = {
+    1: "videos/survey_block1_gala.mp4",
+    2: "videos/survey_block2_roma.mp4",
+    3: "videos/survey_block3_nika.mp4",
+    4: "videos/survey_block4_alina.mp4",
+    5: "videos/survey_block5_yulia.mp4",
+}
+
 # Survey questions structure
 SURVEY_BLOCKS = {
     1: {
@@ -64,26 +73,70 @@ SURVEY_BLOCKS = {
     }
 }
 
-async def send_survey_intro(context: ContextTypes.DEFAULT_TYPE, user_id: int):
-    """Send survey introduction"""
-    intro_text = """Приветик! Как твоя первая неделя в НШМ? Надеемся, ты уже осваиваешься и чувствуешь себя среди своих хаах
+async def send_survey_intro(bot, user_id: int):
+    """Send survey introduction after 3 days"""
+    intro_text = """Приветик! Как твоя первая неделя в НШМ? Надеемся, ты уже осваиваешься и чувствуешь себя среди своих 🫶
 
-Теперь ты официально резидент, и скоро тебе станут доступны возможности нашего сообщества: аккредитации на ивенты, закрытое обучение и кастинги. Но чтобы мы не писали тебе в личку по сто раз с вопросами, пройти плиз этого бота, это займет всего пару минут. Нам оч важно иметь твою актуальную инфу под рукой, чтобы предлагать именно те проекты, которые тебе реально зайдут🫶🫶🫶"""
+Теперь ты официально резидент, и скоро тебе станут доступны возможности нашего сообщества: аккредитации на ивенты, закрытое обучение и кастинги. Но чтобы мы не писали тебе в личку по сто раз с вопросами, пройти плиз этого бота, это займет всего пару минут. Нам оч важно иметь твою актуальную инфу под рукой, чтобы предлагать именно те проекты, которые тебе реально зайдут 🫶"""
 
     keyboard = [
-        [InlineKeyboardButton("Окей, погнали!", callback_data="start_survey")],
-        [InlineKeyboardButton("Назад", callback_data="survey_cancel")]
+        [InlineKeyboardButton("Окей, погнали!", callback_data="start_survey")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     try:
-        await context.bot.send_message(
+        await bot.send_message(
             chat_id=user_id,
             text=intro_text,
             reply_markup=reply_markup
         )
+        db.mark_survey_sent(user_id)
+        logger.info(f"✅ Survey notification sent to user {user_id}")
     except TelegramError as e:
-        logger.error(f"Error sending survey intro: {e}")
+        logger.info(f"Cannot send survey intro to user {user_id} (bot hasn't been contacted): {e}")
+
+async def show_block_circle(context: ContextTypes.DEFAULT_TYPE, user_id: int, block: int):
+    """Send circle video at end of block"""
+    if block not in CIRCLE_VIDEOS:
+        return
+
+    video_path = CIRCLE_VIDEOS[block]
+    circle_names = {1: "Гала 🎬", 2: "Рома 🎬", 3: "Ника 🎬", 4: "Алина 🎬", 5: "Юля 🎬"}
+
+    try:
+        with open(video_path, "rb") as video_file:
+            # Try video_note first, fall back to regular video
+            try:
+                await context.bot.send_video_note(
+                    chat_id=user_id,
+                    video_note=video_file,
+                    duration=60
+                )
+                logger.info(f"Sent circle video (video_note) for block {block} to user {user_id}")
+            except TelegramError as e:
+                if "Voice_messages_forbidden" in str(e) or "video_notes_forbidden" in str(e):
+                    # Fall back to regular video
+                    video_file.seek(0)
+                    await context.bot.send_video(
+                        chat_id=user_id,
+                        video=video_file
+                    )
+                    logger.info(f"Sent circle video (regular video) for block {block} to user {user_id}")
+                else:
+                    raise
+    except FileNotFoundError:
+        logger.error(f"Circle video not found: {video_path}")
+    except TelegramError as e:
+        logger.error(f"Error sending circle video: {e}")
+
+async def start_survey_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start survey questions after intro"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+
+    # Show first question
+    await show_survey_question(user_id, context, block=1, question_idx=0)
 
 async def start_survey(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start survey"""
@@ -97,56 +150,105 @@ async def start_survey(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = Database()
     db.mark_survey_sent(user_id)
 
-    # Show first question
-    await show_survey_question(update, context, block=1, question_idx=0)
+    # Notify user survey started
+    intro_text = """Приветик! Как твоя первая неделя в НШМ? Надеемся, ты уже осваиваешься и чувствуешь себя среди своих 🫶
 
-async def show_survey_question(update: Update, context: ContextTypes.DEFAULT_TYPE, block: int, question_idx: int):
-    """Show survey question"""
-    query = update.callback_query
-    user_id = query.from_user.id
+Теперь давайте пройдём опрос — это займет всего пару минут. Нам оч важно иметь твою актуальную инфу под рукой!"""
+
+    keyboard = [[InlineKeyboardButton("🚀 ГААААЗ", callback_data="survey_start_questions")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await context.bot.send_message(chat_id=user_id, text=intro_text, reply_markup=reply_markup)
+
+async def show_survey_question(user_id: int, context: ContextTypes.DEFAULT_TYPE, block: int, question_idx: int):
+    """Show survey question and wait for text answer"""
+    from database import Database
+    db = Database()
 
     if block not in SURVEY_BLOCKS:
-        # Survey complete
-        await show_survey_complete(update, context)
+        # Survey complete - show final video
+        await show_survey_complete_final(context, user_id)
         return
 
     block_data = SURVEY_BLOCKS[block]
     questions = block_data["questions"]
 
     if question_idx >= len(questions):
+        # End of block - show circle video before moving to next block
+        await show_block_circle(context, user_id, block)
         # Move to next block
-        await show_survey_question(update, context, block + 1, 0)
+        await show_survey_question(user_id, context, block + 1, 0)
         return
 
     question = questions[question_idx]
     full_text = f"{block_data['title']}\n\nВопрос {question_idx + 1}/{len(questions)}:\n\n{question}"
 
-    keyboard = [[
-        InlineKeyboardButton("← Назад", callback_data=f"survey_back:{block}:{question_idx}"),
-        InlineKeyboardButton("→ Дальше", callback_data=f"survey_next:{block}:{question_idx}")
-    ]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    try:
-        await query.edit_message_text(
+    # Add back button if not first question
+    if question_idx > 0 or block > 1:
+        keyboard = [[InlineKeyboardButton("← Назад", callback_data=f"survey_back:{block}:{question_idx}")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await context.bot.send_message(
+            chat_id=user_id,
             text=full_text,
             reply_markup=reply_markup
         )
-    except TelegramError:
-        try:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=full_text,
-                reply_markup=reply_markup
-            )
-        except TelegramError as e:
-            logger.error(f"Error sending survey question: {e}")
+    else:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=full_text + "\n\n_(Напиши ответ текстом)_",
+            parse_mode="Markdown"
+        )
 
     # Store current state
     state_data = json.dumps({"block": block, "question_idx": question_idx})
+    db.set_user_state(user_id, "survey_question", block, state_data)
+
+async def handle_survey_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle text answer from user"""
+    user_id = update.effective_user.id
+    answer_text = update.message.text
+
     from database import Database
     db = Database()
-    db.set_user_state(user_id, "survey_question", block, state_data)
+    state = db.get_user_state(user_id)
+
+    if not state or state.get("current_state") != "survey_question":
+        return
+
+    state_data = json.loads(state["data"]) if state["data"] else {}
+    block = state_data.get("block", 1)
+    question_idx = state_data.get("question_idx", 0)
+
+    if block not in SURVEY_BLOCKS:
+        return
+
+    # Save answer
+    question = SURVEY_BLOCKS[block]["questions"][question_idx]
+    db.save_survey_response(user_id, block, question_idx, question, answer_text)
+    logger.info(f"✅ Saved answer from user {user_id}: block {block}, q {question_idx}")
+
+    # Move to next question
+    await show_survey_question(user_id, context, block, question_idx + 1)
+
+async def handle_survey_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle back button to edit previous answer"""
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    parts = query.data.split(":")
+    block = int(parts[1])
+    question_idx = int(parts[2])
+
+    await query.answer()
+
+    # Go to previous question
+    if question_idx > 0:
+        await show_survey_question(user_id, context, block, question_idx - 1)
+    elif block > 1:
+        # Go to last question of previous block
+        prev_block = block - 1
+        prev_questions_count = len(SURVEY_BLOCKS[prev_block]["questions"])
+        await show_survey_question(user_id, context, prev_block, prev_questions_count - 1)
 
 async def handle_survey_response(update: Update, context: ContextTypes.DEFAULT_TYPE, answer: str):
     """Handle user's survey response"""
@@ -165,10 +267,84 @@ async def handle_survey_response(update: Update, context: ContextTypes.DEFAULT_T
             question = SURVEY_BLOCKS[block]["questions"][question_idx]
             db.save_survey_response(user_id, block, question, answer)
 
+async def show_survey_complete_final(context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    """Show survey completion with final video"""
+    complete_text = """Спасибо за прохождение опроса! 🫶
+
+Мы получили всю нужную информацию и скоро свяжемся с тобой по поводу персональных возможностей в проекте."""
+
+    await context.bot.send_message(chat_id=user_id, text=complete_text)
+
+    # Send final circle video (Kolya)
+    final_video = "videos/survey_final_kolya.mov"
+    try:
+        with open(final_video, "rb") as video_file:
+            try:
+                await context.bot.send_video_note(
+                    chat_id=user_id,
+                    video_note=video_file,
+                    duration=60
+                )
+                logger.info(f"Sent final circle video (video_note) to user {user_id}")
+            except TelegramError as e:
+                if "Voice_messages_forbidden" in str(e) or "video_notes_forbidden" in str(e):
+                    video_file.seek(0)
+                    await context.bot.send_video(
+                        chat_id=user_id,
+                        video=video_file
+                    )
+                    logger.info(f"Sent final circle video (regular video) to user {user_id}")
+                else:
+                    raise
+    except FileNotFoundError:
+        logger.error(f"Final video not found: {final_video}")
+    except TelegramError as e:
+        logger.error(f"Error sending final circle video: {e}")
+
+    # Sync all survey responses to Google Sheets
+    db = Database()
+    user_info = db.get_user(user_id)
+    survey_responses = db.get_survey_responses(user_id)
+
+    try:
+        sheets = SheetsService()
+        sheets.sync_survey_responses(user_id, survey_responses)
+        logger.info(f"✅ Synced {len(survey_responses)} survey responses to Sheets for user {user_id}")
+    except Exception as e:
+        logger.error(f"Error syncing to Sheets: {e}")
+
+    # Notify admins
+    from config import TELEGRAM_ADMIN_IDS
+
+    admin_message = f"✅ Резидент завершил опрос:\n\n{user_info['first_name']} {user_info['last_name']}"
+
+    for admin_id in TELEGRAM_ADMIN_IDS:
+        try:
+            await context.bot.send_message(chat_id=admin_id, text=admin_message)
+        except TelegramError as e:
+            logger.error(f"Error sending admin notification: {e}")
+
+    db.set_user_state(user_id, "survey_complete")
+
 async def show_survey_complete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show survey completion message"""
     query = update.callback_query
     user_id = query.from_user.id
+
+    # Send final circle video (Kolyа)
+    final_video = "videos/survey_final_kolya.mp4"
+    try:
+        with open(final_video, "rb") as video_file:
+            await context.bot.send_video_note(
+                chat_id=user_id,
+                video_note=video_file,
+                duration=60
+            )
+        logger.info(f"Sent final circle video (Kolyа) to user {user_id}")
+    except FileNotFoundError:
+        logger.error(f"Final video not found: {final_video}")
+    except TelegramError as e:
+        logger.error(f"Error sending final circle video: {e}")
 
     complete_text = """Спасибо за прохождение опроса! 🫶
 
