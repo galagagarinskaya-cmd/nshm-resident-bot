@@ -143,52 +143,42 @@ async def start_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await show_rule_card(update, context, block_num=1, card_index=0)
 
 async def show_rule_card(update: Update, context: ContextTypes.DEFAULT_TYPE, block_num: int, card_index: int):
-    """Show a specific rule card (image)"""
+    """Show all rule cards for a block at once"""
     user_id = update.callback_query.from_user.id if update.callback_query else update.effective_user.id
 
-    # Get cards for this block
+    if update.callback_query:
+        await update.callback_query.answer()
+
+    # Get all cards for this block
     cards = RULE_CARDS.get(block_num, [])
-    if card_index >= len(cards):
-        # All cards shown - show accept button
-        await show_accept_button(update, context, block_num)
+
+    if not cards:
+        await context.bot.send_message(chat_id=user_id, text="❌ Карточки правил не найдены")
         return
 
-    card_path = cards[card_index]
-
-    # Prepare buttons
-    buttons = []
-
-    # Next button (if not last card)
-    if card_index < len(cards) - 1:
-        buttons.append(InlineKeyboardButton("➡️ Далее", callback_data=f"rule_card:{block_num}:{card_index+1}"))
-    else:
-        # Last card - show accept button
-        buttons.append(InlineKeyboardButton("✅ Полностью согласен", callback_data=f"accept_rule:{block_num}"))
-
-    reply_markup = InlineKeyboardMarkup([buttons])
-
+    # Send all cards of the block
     try:
-        # Try to send image
-        with open(card_path, 'rb') as photo:
-            if update.callback_query:
-                await update.callback_query.answer()
-                await context.bot.send_photo(
-                    chat_id=user_id,
-                    photo=photo,
-                    reply_markup=reply_markup
-                )
-            else:
-                await context.bot.send_photo(
-                    chat_id=user_id,
-                    photo=photo,
-                    reply_markup=reply_markup
-                )
-        logger.info(f"📸 Sent rule card {block_num}:{card_index} to {user_id}")
-    except FileNotFoundError:
-        logger.error(f"❌ Card not found: {card_path}")
+        for card_path in cards:
+            with open(card_path, 'rb') as photo:
+                await context.bot.send_photo(chat_id=user_id, photo=photo)
+        logger.info(f"📸 Sent all {len(cards)} rule cards for block {block_num} to {user_id}")
+    except FileNotFoundError as e:
+        logger.error(f"❌ Card not found: {e}")
         await context.bot.send_message(chat_id=user_id, text="❌ Карточка правил не найдена")
+        return
     except TelegramError as e:
-        logger.error(f"❌ Error sending card: {e}")
+        logger.error(f"❌ Error sending cards: {e}")
+        return
+
+    # Show accept button after all cards
+    keyboard = [[InlineKeyboardButton("✅ Принимаю правила", callback_data=f"accept_rule:{block_num}")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=f"📖 Ты прочитал все правила раздела {block_num}",
+        reply_markup=reply_markup
+    )
 
 async def show_accept_button(update: Update, context: ContextTypes.DEFAULT_TYPE, block_num: int):
     """Show accept button after all cards"""
