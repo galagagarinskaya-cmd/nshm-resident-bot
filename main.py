@@ -118,7 +118,7 @@ async def start_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Already accepted - go to survey
         await context.bot.send_message(
             chat_id=user_id,
-            text="Ты уже принял правила! 🎉\n\nПеременем к опросу 👇"
+            text="Ты уже принял правила! 🎉\n\nДавай перейдем к опросу 👇"
         )
         await start_survey(user_id, context)
         return
