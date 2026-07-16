@@ -301,6 +301,18 @@ async def announce_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
 # ============= START COMMAND =============
+async def restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Restart the rules acceptance process"""
+    user_id = update.effective_user.id
+
+    # Reset rules and survey status
+    db.reset_rules(user_id)
+    db.set_user_state(user_id, BotState.WELCOME)
+
+    # Send restart confirmation
+    await update.message.reply_text("🔄 Перезапущен процесс принятия правил!\n\nНажми /start чтобы начать заново.")
+    logger.info(f"🔄 User {user_id} restarted rules acceptance")
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command"""
     user = update.effective_user
@@ -422,6 +434,7 @@ def main():
     # Handlers - ORDER MATTERS!
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members))
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("restart", restart))
     application.add_handler(CommandHandler("announce_rules", announce_rules))
     application.add_handler(CallbackQueryHandler(bot_start_handler, pattern="^bot_start$"))
     application.add_handler(CallbackQueryHandler(start_rules, pattern="^start_rules$"))

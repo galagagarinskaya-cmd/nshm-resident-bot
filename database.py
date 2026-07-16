@@ -100,6 +100,17 @@ class Database:
         conn.commit()
         conn.close()
 
+    def reset_rules(self, user_id: int):
+        """Reset rules acceptance"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE users SET rules_accepted = 0, rules_accepted_at = NULL
+            WHERE user_id = ?
+        """, (user_id,))
+        conn.commit()
+        conn.close()
+
     def mark_survey_sent(self, user_id: int):
         """Mark survey as sent"""
         conn = sqlite3.connect(self.db_path)
