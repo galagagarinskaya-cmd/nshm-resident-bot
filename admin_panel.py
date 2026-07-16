@@ -226,8 +226,6 @@ def index():
 @app.route('/api/stats')
 def get_stats():
     """Get bot statistics"""
-    conn_data = db.db_path
-
     import sqlite3
     conn = sqlite3.connect(db.db_path)
     cursor = conn.cursor()
