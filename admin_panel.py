@@ -1,12 +1,22 @@
 from flask import Flask, render_template_string, request, jsonify
 from flask_cors import CORS
-from database import Database
-from config import FLASK_PORT, FLASK_HOST, TELEGRAM_ADMIN_IDS
 import json
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+try:
+    from database import Database
+    from config import FLASK_PORT, FLASK_HOST, TELEGRAM_ADMIN_IDS
+    db = Database()
+    logger.info("✅ Database initialized successfully")
+except Exception as e:
+    logger.error(f"❌ Error initializing database: {e}")
+    db = None
 
 app = Flask(__name__)
 CORS(app)
-db = Database()
 
 # Simple HTML template for admin panel
 ADMIN_TEMPLATE = """
@@ -226,45 +236,65 @@ def index():
 @app.route('/api/stats')
 def get_stats():
     """Get bot statistics"""
+    if not db:
+        return jsonify({
+            "total_residents": 0,
+            "rules_accepted": 0,
+            "survey_completed": 0,
+            "survey_pending": 0,
+            "error": "Database not initialized"
+        }), 503
+
     import sqlite3
-    conn = sqlite3.connect(db.db_path)
-    cursor = conn.cursor()
+    try:
+        conn = sqlite3.connect(db.db_path)
+        cursor = conn.cursor()
 
-    cursor.execute("SELECT COUNT(*) FROM users")
-    total = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM users WHERE rules_accepted = 1")
-    rules = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM users WHERE rules_accepted = 1")
+        rules = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM users WHERE survey_completed = 1")
-    survey_done = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM users WHERE survey_completed = 1")
+        survey_done = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM users WHERE survey_sent = 1 AND survey_completed = 0")
-    survey_pending = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM users WHERE survey_sent = 1 AND survey_completed = 0")
+        survey_pending = cursor.fetchone()[0]
 
-    conn.close()
+        conn.close()
 
-    return jsonify({
-        "total_residents": total,
-        "rules_accepted": rules,
-        "survey_completed": survey_done,
-        "survey_pending": survey_pending
-    })
+        return jsonify({
+            "total_residents": total,
+            "rules_accepted": rules,
+            "survey_completed": survey_done,
+            "survey_pending": survey_pending
+        })
+    except Exception as e:
+        logger.error(f"Error getting stats: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/residents')
 def get_residents():
     """Get all residents"""
+    if not db:
+        return jsonify({"residents": [], "error": "Database not initialized"}), 503
+
     import sqlite3
-    conn = sqlite3.connect(db.db_path)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    try:
+        conn = sqlite3.connect(db.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
 
-    cursor.execute("SELECT * FROM users ORDER BY created_at DESC")
-    residents = [dict(row) for row in cursor.fetchall()]
+        cursor.execute("SELECT * FROM users ORDER BY created_at DESC")
+        residents = [dict(row) for row in cursor.fetchall()]
 
-    conn.close()
+        conn.close()
 
-    return jsonify({"residents": residents})
+        return jsonify({"residents": residents})
+    except Exception as e:
+        logger.error(f"Error getting residents: {e}")
+        return jsonify({"residents": [], "error": str(e)}), 500
 
 @app.route('/api/surveys/<int:user_id>')
 def get_user_surveys(user_id: int):
