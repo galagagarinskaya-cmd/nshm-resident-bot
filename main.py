@@ -92,7 +92,7 @@ async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_
 
 Поздравляем, теперь ты в комьюнити самых крутых зумеров в медиа 🫶
 
-Скорее прочитай про сообщество и треки в коммьюнити, а затем нажми кнопку ниже 👇"""
+Скорее прочитай про [сообщество](https://t.me/c/1914063685/480) и [треки в коммьюнити](https://t.me/c/1914063685/494), а затем нажми кнопку ниже 👇"""
 
                 keyboard = [[InlineKeyboardButton("Давайте начнём!", callback_data="start_rules")]]
                 reply_markup = InlineKeyboardMarkup(keyboard)
@@ -100,7 +100,8 @@ async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_
                 await context.bot.send_message(
                     chat_id=TELEGRAM_CHAT_ID,
                     text=welcome_text,
-                    reply_markup=reply_markup
+                    reply_markup=reply_markup,
+                    parse_mode="Markdown"
                 )
                 db.set_user_state(user_id, BotState.WELCOME)
                 logger.info(f"📢 Sent welcome message in group to {user_id}")
