@@ -272,10 +272,13 @@ def get_user_surveys(user_id: int):
     responses = db.get_survey_responses(user_id)
     return jsonify({"responses": responses})
 
-def run_admin_panel(port=FLASK_PORT):
+def run_admin_panel(port=None):
     """Run admin panel"""
+    import os
+    # Use Railway PORT env var if available, otherwise use configured FLASK_PORT
+    port = port or int(os.getenv("PORT", FLASK_PORT))
     print(f"Starting Admin Panel on http://{FLASK_HOST}:{port}")
-    app.run(host=FLASK_HOST, port=port, debug=False)
+    app.run(host=FLASK_HOST, port=port, debug=False, threaded=True)
 
 if __name__ == "__main__":
     run_admin_panel()

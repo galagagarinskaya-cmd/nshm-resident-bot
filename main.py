@@ -435,8 +435,9 @@ def start_admin_panel():
     """Start Flask admin panel in background thread"""
     try:
         from admin_panel import run_admin_panel
-        logger.info(f"🎛️ Starting admin panel on port {FLASK_PORT}")
-        run_admin_panel(port=FLASK_PORT)
+        port = os.getenv("PORT", FLASK_PORT)
+        logger.info(f"🎛️ Starting admin panel on port {port}")
+        run_admin_panel(port=int(port))
     except Exception as e:
         logger.error(f"❌ Error starting admin panel: {e}")
 
