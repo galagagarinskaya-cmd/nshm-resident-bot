@@ -146,8 +146,6 @@ async def start_survey(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     # Mark survey as sent
-    from database import Database
-    db = Database()
     db.mark_survey_sent(user_id)
 
     # Notify user survey started
@@ -162,9 +160,6 @@ async def start_survey(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_survey_question(user_id: int, context: ContextTypes.DEFAULT_TYPE, block: int, question_idx: int):
     """Show survey question and wait for text answer"""
-    from database import Database
-    db = Database()
-
     if block not in SURVEY_BLOCKS:
         # Survey complete - show final video
         await show_survey_complete_final(context, user_id)
@@ -206,10 +201,16 @@ async def show_survey_question(user_id: int, context: ContextTypes.DEFAULT_TYPE,
 async def handle_survey_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle text answer from user"""
     user_id = update.effective_user.id
-    answer_text = update.message.text
+    answer_text = update.message.text.strip() if update.message.text else ""
 
-    from database import Database
-    db = Database()
+    # Validate answer (not empty, not a command)
+    if not answer_text or answer_text.startswith("/"):
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="⚠️ Пожалуйста, напиши нормальный ответ (не команду и не пусто)"
+        )
+        return
+
     state = db.get_user_state(user_id)
 
     if not state or state.get("current_state") != "survey_question":
@@ -254,8 +255,6 @@ async def handle_survey_response(update: Update, context: ContextTypes.DEFAULT_T
     """Handle user's survey response"""
     user_id = update.effective_user.id
 
-    from database import Database
-    db = Database()
     state = db.get_user_state(user_id)
 
     if state:

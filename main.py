@@ -146,10 +146,11 @@ async def start_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_rule_card(update: Update, context: ContextTypes.DEFAULT_TYPE, block_num: int, card_index: int):
     """Show all rule cards for a block at once"""
-    user_id = update.callback_query.from_user.id if update.callback_query else update.effective_user.id
-
-    if update.callback_query:
+    if update.callback_query and update.callback_query.from_user:
+        user_id = update.callback_query.from_user.id
         await update.callback_query.answer()
+    else:
+        user_id = update.effective_user.id
 
     # Get all cards for this block
     cards = RULE_CARDS.get(block_num, [])
@@ -179,20 +180,6 @@ async def show_rule_card(update: Update, context: ContextTypes.DEFAULT_TYPE, blo
     await context.bot.send_message(
         chat_id=user_id,
         text=f"📖 Ты прочитал все правила раздела {block_num}",
-        reply_markup=reply_markup
-    )
-
-async def show_accept_button(update: Update, context: ContextTypes.DEFAULT_TYPE, block_num: int):
-    """Show accept button after all cards"""
-    user_id = update.callback_query.from_user.id
-    await update.callback_query.answer()
-
-    keyboard = [[InlineKeyboardButton("✅ Полностью согласен", callback_data=f"accept_rule:{block_num}")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await context.bot.send_message(
-        chat_id=user_id,
-        text="📖 Ты прочитал все правила этого раздела",
         reply_markup=reply_markup
     )
 
