@@ -1,4 +1,5 @@
 import logging
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 from telegram.error import TelegramError
@@ -443,10 +444,14 @@ def main():
     """Start bot and admin panel"""
     global scheduler
 
-    # Start admin panel in separate thread
-    admin_thread = threading.Thread(target=start_admin_panel, daemon=True)
-    admin_thread.start()
-    logger.info("🎛️ Admin panel thread started")
+    # Start admin panel only on Railway (production)
+    is_railway = os.getenv("RAILWAY_ENVIRONMENT_NAME") is not None
+    if is_railway:
+        admin_thread = threading.Thread(target=start_admin_panel, daemon=True)
+        admin_thread.start()
+        logger.info("🎛️ Admin panel thread started (Railway deployment)")
+    else:
+        logger.info("⏭️ Skipping admin panel (local development)")
 
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
