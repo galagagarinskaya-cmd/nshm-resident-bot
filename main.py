@@ -96,10 +96,10 @@ async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_
 
                 keyboard = [
                     [
-                        InlineKeyboardButton("Сообщество", url="https://t.me/c/1914063685/480"),
-                        InlineKeyboardButton("Треки", url="https://t.me/c/1914063685/494")
+                        InlineKeyboardButton("Про сообщество", url="https://t.me/c/1914063685/480"),
+                        InlineKeyboardButton("Треки в коммьюнити", url="https://t.me/c/1914063685/494")
                     ],
-                    [InlineKeyboardButton("Давайте начнём!", callback_data="start_rules")]
+                    [InlineKeyboardButton("Давай начнем!", callback_data="start_rules")]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -139,8 +139,8 @@ async def start_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         keyboard = [
             [
-                InlineKeyboardButton("Сообщество", url="https://t.me/c/1914063685/480"),
-                InlineKeyboardButton("Треки", url="https://t.me/c/1914063685/494")
+                InlineKeyboardButton("Про сообщество", url="https://t.me/c/1914063685/480"),
+                InlineKeyboardButton("Треки в коммьюнити", url="https://t.me/c/1914063685/494")
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
