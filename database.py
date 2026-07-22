@@ -122,6 +122,17 @@ class Database:
         conn.commit()
         conn.close()
 
+    def mark_survey_completed(self, user_id: int):
+        """Mark survey as completed"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE users SET survey_completed = 1, survey_completed_at = ?
+            WHERE user_id = ?
+        """, (datetime.now(), user_id))
+        conn.commit()
+        conn.close()
+
     def save_survey_response(self, user_id: int, block_number: int, question_index: int, question: str, answer: str):
         """Save survey response"""
         conn = sqlite3.connect(self.db_path)

@@ -6,8 +6,9 @@ from datetime import datetime, timedelta
 import json
 from apscheduler.schedulers.background import BackgroundScheduler
 import pytz
+import threading
 
-from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ADMIN_IDS, SHEETS_CREDENTIALS_PATH, SURVEY_DELAY_DAYS
+from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ADMIN_IDS, SHEETS_CREDENTIALS_PATH, SURVEY_DELAY_DAYS, FLASK_PORT
 from database import Database
 from sheets_service import SheetsService
 from survey import (
@@ -83,27 +84,27 @@ async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_
         except TelegramError as e:
             logger.error(f"❌ Error restricting {user_id}: {e}")
 
-        # Send welcome message in group with button
-        try:
-            welcome_text = f"""Привет, {user.first_name}! 👋
+        # Send welcome message in group with button (ONLY ONCE)
+        if not db.get_user_state(user_id) or db.get_user_state(user_id).get("current_state") != BotState.WELCOME:
+            try:
+                welcome_text = f"""Привет, {user.first_name}! 👋
 
 Поздравляем, теперь ты в комьюнити самых крутых зумеров в медиа 🫶
 
-Скорее прочитай про [сообщество](https://t.me/c/1914063685/480) и [треки в коммьюнити](https://t.me/c/1914063685/494), а затем нажми кнопку ниже 👇"""
+Скорее прочитай про сообщество и треки в коммьюнити, а затем нажми кнопку ниже 👇"""
 
-            keyboard = [[InlineKeyboardButton("Давайте начнём!", callback_data="start_rules")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+                keyboard = [[InlineKeyboardButton("Давайте начнём!", callback_data="start_rules")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await context.bot.send_message(
-                chat_id=TELEGRAM_CHAT_ID,
-                text=welcome_text,
-                reply_markup=reply_markup,
-                parse_mode="Markdown"
-            )
-            db.set_user_state(user_id, BotState.WELCOME)
-            logger.info(f"📢 Sent welcome message in group to {user_id}")
-        except TelegramError as e:
-            logger.error(f"❌ Error sending welcome message: {e}")
+                await context.bot.send_message(
+                    chat_id=TELEGRAM_CHAT_ID,
+                    text=welcome_text,
+                    reply_markup=reply_markup
+                )
+                db.set_user_state(user_id, BotState.WELCOME)
+                logger.info(f"📢 Sent welcome message in group to {user_id}")
+            except TelegramError as e:
+                logger.error(f"❌ Error sending welcome message: {e}")
 
 # ============= RULES HANDLERS =============
 async def start_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -201,7 +202,7 @@ async def accept_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     block_num = int(query.data.split(":")[1])
     await query.answer()
 
-    if block_num >= 4:
+    if block_num == 4:
         # All rules accepted - UNLOCK
         db.accept_rules(user_id)
 
@@ -233,9 +234,12 @@ async def accept_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton("Начать опрос", callback_data="start_survey")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await context.bot.send_message(chat_id=user_id, text=completion_text, reply_markup=reply_markup)
-        db.set_user_state(user_id, BotState.SURVEY)
-        logger.info(f"✅ Rules accepted for user {user_id}. Survey scheduled in {SURVEY_DELAY_DAYS} days")
+        try:
+            await context.bot.send_message(chat_id=user_id, text=completion_text, reply_markup=reply_markup)
+            db.set_user_state(user_id, BotState.SURVEY)
+            logger.info(f"✅ Rules accepted for user {user_id}. Survey scheduled in {SURVEY_DELAY_DAYS} days")
+        except TelegramError as e:
+            logger.error(f"❌ Error sending completion message: {e}")
     else:
         # Show next block
         await show_rule_card(update, context, block_num=block_num + 1, card_index=0)
@@ -426,9 +430,24 @@ async def check_and_send_surveys(application: Application):
             except Exception as e:
                 logger.error(f"Error sending survey to user {user_id}: {e}")
 
+def start_admin_panel():
+    """Start Flask admin panel in background thread"""
+    try:
+        from admin_panel import run_admin_panel
+        logger.info(f"🎛️ Starting admin panel on port {FLASK_PORT}")
+        run_admin_panel(port=FLASK_PORT)
+    except Exception as e:
+        logger.error(f"❌ Error starting admin panel: {e}")
+
 def main():
-    """Start bot"""
+    """Start bot and admin panel"""
     global scheduler
+
+    # Start admin panel in separate thread
+    admin_thread = threading.Thread(target=start_admin_panel, daemon=True)
+    admin_thread.start()
+    logger.info("🎛️ Admin panel thread started")
+
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
     # Handlers - ORDER MATTERS!

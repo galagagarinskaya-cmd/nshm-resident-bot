@@ -306,12 +306,18 @@ async def show_survey_complete_final(context: ContextTypes.DEFAULT_TYPE, user_id
     user_info = db.get_user(user_id)
     survey_responses = db.get_survey_responses(user_id)
 
-    try:
-        sheets = SheetsService()
-        sheets.sync_survey_responses(user_id, survey_responses)
-        logger.info(f"✅ Synced {len(survey_responses)} survey responses to Sheets for user {user_id}")
-    except Exception as e:
-        logger.error(f"Error syncing to Sheets: {e}")
+    if survey_responses:
+        try:
+            sheets = SheetsService()
+            sheets.sync_survey_responses(user_id, survey_responses)
+            logger.info(f"✅ Synced {len(survey_responses)} survey responses to Sheets for user {user_id}")
+            # Mark survey as completed in database
+            db.mark_survey_completed(user_id)
+            logger.info(f"✅ Marked survey completed for user {user_id}")
+        except Exception as e:
+            logger.error(f"Error syncing to Sheets: {e}")
+    else:
+        logger.warning(f"⚠️ No survey responses found for user {user_id}")
 
     # Notify admins
     from config import TELEGRAM_ADMIN_IDS

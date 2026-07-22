@@ -17,22 +17,36 @@ class SheetsService:
 
     def init_service(self, credentials_path: str = None):
         """Initialize Google Sheets API service"""
-        if credentials_path is None:
-            cred_file = "credentials.json"
-            if os.path.exists(cred_file):
-                credentials_path = cred_file
-
-        if not credentials_path or not os.path.exists(credentials_path):
-            logger.warning("Google Sheets credentials not found. Some features will be disabled.")
-            return
-
         try:
+            # Try to load from environment variable first (Railway)
+            creds_json = os.getenv("GOOGLE_CREDENTIALS")
+            if creds_json:
+                import json as json_module
+                creds_dict = json_module.loads(creds_json)
+                creds = Credentials.from_service_account_info(
+                    creds_dict,
+                    scopes=['https://www.googleapis.com/auth/spreadsheets']
+                )
+                self.service = discovery.build('sheets', 'v4', credentials=creds)
+                logger.info("Google Sheets API initialized from env variable")
+                return
+
+            # Fallback to credentials.json (local development)
+            if credentials_path is None:
+                cred_file = "credentials.json"
+                if os.path.exists(cred_file):
+                    credentials_path = cred_file
+
+            if not credentials_path or not os.path.exists(credentials_path):
+                logger.warning("Google Sheets credentials not found. Some features will be disabled.")
+                return
+
             creds = Credentials.from_service_account_file(
                 credentials_path,
                 scopes=['https://www.googleapis.com/auth/spreadsheets']
             )
             self.service = discovery.build('sheets', 'v4', credentials=creds)
-            logger.info("Google Sheets API initialized successfully")
+            logger.info("Google Sheets API initialized from credentials file")
         except Exception as e:
             logger.error(f"Error initializing Sheets service: {e}")
 
