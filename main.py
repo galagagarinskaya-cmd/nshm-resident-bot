@@ -92,7 +92,7 @@ async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_
 
 Поздравляем, теперь ты в комьюнити самых крутых зумеров в медиа 🫶
 
-Скорее прочитай про [сообщество](https://t.me/c/1914063685/480) и [треки в коммьюнити](https://t.me/c/1914063685/494), а затем нажми кнопку ниже 👇"""
+Скорее прочитай про <a href="https://t.me/c/1914063685/480">сообщество</a> и <a href="https://t.me/c/1914063685/494">треки в коммьюнити</a>, а затем нажми кнопку ниже 👇"""
 
                 keyboard = [[InlineKeyboardButton("Давайте начнём!", callback_data="start_rules")]]
                 reply_markup = InlineKeyboardMarkup(keyboard)
@@ -101,7 +101,7 @@ async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_
                     chat_id=TELEGRAM_CHAT_ID,
                     text=welcome_text,
                     reply_markup=reply_markup,
-                    parse_mode="Markdown"
+                    parse_mode="HTML"
                 )
                 db.set_user_state(user_id, BotState.WELCOME)
                 logger.info(f"📢 Sent welcome message in group to {user_id}")
@@ -129,7 +129,7 @@ async def start_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Send intro message in DM
     intro_text = """Приветик! Поздравляем, теперь ты в комьюнити самых крутых зумеров в медиа 🫶
 
-Скорее читай про [сообщество](https://t.me/c/1914063685/480) и [треки в коммьюнити](https://t.me/c/1914063685/494), а затем изучай карточки ниже, где подробно описали, "что здесь можно, нужно и нельзя делать"
+Скорее читай про <a href="https://t.me/c/1914063685/480">сообщество</a> и <a href="https://t.me/c/1914063685/494">треки в коммьюнити</a>, а затем изучай карточки ниже, где подробно описали, &quot;что здесь можно, нужно и нельзя делать&quot;
 
 Давайте начнём! 👇"""
 
@@ -137,7 +137,7 @@ async def start_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=user_id,
             text=intro_text,
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
     except TelegramError as e:
         logger.error(f"Error sending intro: {e}")
