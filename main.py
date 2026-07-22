@@ -70,15 +70,10 @@ async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_
                 user_id=user_id,
                 permissions=ChatPermissions(
                     can_send_messages=False,
+                    can_send_media_messages=False,
                     can_send_other_messages=False,
                     can_add_web_page_previews=False,
-                    can_send_polls=False,
-                    can_send_audios=False,
-                    can_send_documents=False,
-                    can_send_photos=False,
-                    can_send_video_notes=False,
-                    can_send_voice_notes=False,
-                    can_send_videos=False
+                    can_send_polls=False
                 )
             )
             logger.info(f"🚫 Restricted member {user_id}")
@@ -212,34 +207,37 @@ async def accept_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_id=user_id,
                 permissions=ChatPermissions(
                     can_send_messages=True,
+                    can_send_media_messages=True,
                     can_send_other_messages=True,
                     can_add_web_page_previews=True,
                     can_send_polls=True,
-                    can_send_audios=True,
-                    can_send_documents=True,
-                    can_send_photos=True,
-                    can_send_video_notes=True,
-                    can_send_voice_notes=True,
-                    can_send_videos=True,
                     can_manage_topics=True
                 )
             )
             logger.info(f"✅ Unlocked user {user_id}")
-        except TelegramError as e:
+        except Exception as e:
             logger.error(f"❌ Error unlocking: {e}")
 
-        completion_text = """Кайфы! Теперь для тебя всё открыто. Если будут вопросы — пиши в чатик или в @info_nshm, велком ту зе клаб 🫶
+        # First message — welcome to community
+        welcome_message = "Кайфы! Теперь для тебя всё открыто. Если будут вопросы — пиши в чатик или в @info_nshm, велком ту зе клаб 🫶"
 
-Теперь давайте пройдём опрос чтобы мы могли предложить тебе самые интересные проекты 👇"""
+        try:
+            await context.bot.send_message(chat_id=user_id, text=welcome_message)
+            logger.info(f"✅ Sent welcome message to user {user_id}")
+        except TelegramError as e:
+            logger.error(f"❌ Error sending welcome message: {e}")
+
+        # Second message — survey invitation with button
+        survey_text = "Теперь давайте пройдём опрос чтобы мы могли предложить тебе самые интересные проекты 👇"
         keyboard = [[InlineKeyboardButton("Начать опрос", callback_data="start_survey")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         try:
-            await context.bot.send_message(chat_id=user_id, text=completion_text, reply_markup=reply_markup)
+            await context.bot.send_message(chat_id=user_id, text=survey_text, reply_markup=reply_markup)
             db.set_user_state(user_id, BotState.SURVEY)
             logger.info(f"✅ Rules accepted for user {user_id}. Survey scheduled in {SURVEY_DELAY_DAYS} days")
         except TelegramError as e:
-            logger.error(f"❌ Error sending completion message: {e}")
+            logger.error(f"❌ Error sending survey invitation: {e}")
     else:
         # Show next block
         await show_rule_card(update, context, block_num=block_num + 1, card_index=0)
