@@ -283,9 +283,12 @@ async def announce_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 Нажми кнопку ниже 👇"""
 
+    # A deep link, not callback_data: the button must OPEN the bot. Telegram
+    # forbids a bot from writing first to someone who has never started it, so
+    # a callback button would silently do nothing for exactly the new members
+    # who need it.
     keyboard = [
-        [InlineKeyboardButton("🚀 Старт", callback_data="bot_start")],
-        [InlineKeyboardButton("✅ Принять правила", callback_data="start_rules")]
+        [InlineKeyboardButton("✅ Принять правила", url="https://t.me/nshm_residents_bot?start=rules")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
