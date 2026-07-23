@@ -228,6 +228,18 @@ async def handle_survey_answer(update: Update, context: ContextTypes.DEFAULT_TYP
     db.save_survey_response(user_id, block, question_idx, question, answer_text)
     logger.info(f"✅ Saved answer from user {user_id}: block {block}, q {question_idx}")
 
+    # Push to Sheets right away so partial answers survive if the user drops off
+    # mid-survey. A Sheets failure must never break the survey flow.
+    try:
+        responses_so_far = db.get_survey_responses(user_id)
+        if responses_so_far:
+            if sheets.sync_survey_responses(user_id, responses_so_far):
+                logger.info(f"📤 Synced {len(responses_so_far)} answers so far to Sheets for user {user_id}")
+            else:
+                logger.warning(f"⚠️ Incremental Sheets sync returned False for user {user_id}")
+    except Exception as e:
+        logger.error(f"Incremental Sheets sync failed for user {user_id}: {e}")
+
     # Move to next question
     await show_survey_question(user_id, context, block, question_idx + 1)
 
