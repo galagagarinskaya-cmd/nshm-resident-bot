@@ -13,7 +13,7 @@ SHEETS_ID = "1kdWpaMIDDoQ87eJ-HoAzkldmVNbGEs9eROWhy3xwd00"
 SHEETS_CREDENTIALS_PATH = os.getenv("GOOGLE_CREDENTIALS_PATH", "credentials.json")
 
 # App config
-DATABASE_PATH = "nshm_bot.db"
+DATABASE_PATH = os.getenv("DATABASE_PATH", "nshm_bot.db")
 FLASK_PORT = int(os.getenv("FLASK_PORT", 5001))
 FLASK_HOST = os.getenv("FLASK_HOST", "0.0.0.0")
 
