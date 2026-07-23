@@ -1,6 +1,6 @@
 import logging
 import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, InputMediaPhoto
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 from telegram.error import TelegramError
 from datetime import datetime, timedelta
@@ -164,12 +164,14 @@ async def show_rule_card(update: Update, context: ContextTypes.DEFAULT_TYPE, blo
         await context.bot.send_message(chat_id=user_id, text="❌ Карточки правил не найдены")
         return
 
-    # Send all cards of the block
+    # Send all cards of the block as a single album (media group)
     try:
+        media_group = []
         for card_path in cards:
             with open(card_path, 'rb') as photo:
-                await context.bot.send_photo(chat_id=user_id, photo=photo)
-        logger.info(f"📸 Sent all {len(cards)} rule cards for block {block_num} to {user_id}")
+                media_group.append(InputMediaPhoto(media=photo.read()))
+        await context.bot.send_media_group(chat_id=user_id, media=media_group)
+        logger.info(f"📸 Sent all {len(cards)} rule cards as album for block {block_num} to {user_id}")
     except FileNotFoundError as e:
         logger.error(f"❌ Card not found: {e}")
         await context.bot.send_message(chat_id=user_id, text="❌ Карточка правил не найдена")
