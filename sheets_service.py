@@ -117,27 +117,56 @@ class SheetsService:
             logger.error(f"Error getting content: {e}")
             return {}
 
-    def find_resident_row_by_name(self, first_name: str, last_name: str) -> Optional[int]:
-        """Find resident row by first and last name"""
+    def find_resident_row_by_user_id(self, user_id: int) -> Optional[int]:
+        """Find a resident row by the Telegram user id stamped in column AA.
+
+        This is the stable key: survey answers never write to AA, so a resident
+        who stops mid-survey and comes back later keeps filling the same row.
+        """
         if not self.service:
             return None
 
         try:
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=self.sheets_id,
-                range="Резиденты!A:C"
+                range="Резиденты!AA:AA"
             ).execute()
 
-            values = result.get('values', [])
-            if not values:
-                return None
+            target = str(user_id)
+            for idx, row in enumerate(result.get('values', [])[1:], 2):
+                if row and str(row[0]).strip() == target:
+                    return idx
 
-            for idx, row in enumerate(values[1:], 2):  # Start from row 2 (skip header)
-                if len(row) >= 3:
-                    sheet_first = str(row[1]).strip().lower() if len(row) > 1 else ""
-                    sheet_last = str(row[2]).strip().lower() if len(row) > 2 else ""
-                    if sheet_first == first_name.lower() and sheet_last == last_name.lower():
-                        return idx
+            return None
+        except Exception as e:
+            logger.error(f"Error finding resident by user_id: {e}")
+            return None
+
+    def find_resident_row_by_name(self, first_name: str, last_name: str) -> Optional[int]:
+        """Find an existing resident row by name.
+
+        Column A holds "Имя + фамилия", so match on the set of name parts rather
+        than on exact cell equality (the order differs between the sheet and
+        Telegram profiles).
+        """
+        if not self.service:
+            return None
+
+        wanted = set((first_name or "").strip().lower().split())
+        wanted |= set((last_name or "").strip().lower().split())
+        if not wanted:
+            return None
+
+        try:
+            result = self.service.spreadsheets().values().get(
+                spreadsheetId=self.sheets_id,
+                range="Резиденты!A:A"
+            ).execute()
+
+            for idx, row in enumerate(result.get('values', [])[1:], 2):
+                full_name = str(row[0]).strip().lower() if row else ""
+                if full_name and wanted.issubset(set(full_name.split())):
+                    return idx
 
             return None
         except Exception as e:
@@ -159,13 +188,14 @@ class SheetsService:
             values = result.get('values', [])
             next_row = len(values) + 1
 
-            # Prepare row data - добавим имя и фамилию
-            row_data = ["", first_name, last_name]  # A (ID), B (Имя), C (Фамилия)
+            # Column A is "Имя + фамилия", B is "Только фамилия". Leave C alone —
+            # that is "Регион" and the survey fills it in.
+            row_data = [f"{first_name} {last_name}".strip(), last_name]
 
             # Insert the row
             self.service.spreadsheets().values().update(
                 spreadsheetId=self.sheets_id,
-                range=f"Резиденты!A{next_row}:C{next_row}",
+                range=f"Резиденты!A{next_row}:B{next_row}",
                 valueInputOption="RAW",
                 body={"values": [row_data]}
             ).execute()
@@ -190,8 +220,13 @@ class SheetsService:
             first_name = user_info.get("first_name", "")
             last_name = user_info.get("last_name", "")
 
-            # Find or create resident row
-            row_num = self.find_resident_row_by_name(first_name, last_name)
+            # Find or create the resident row. The user id in column AA is the
+            # stable key, so a resident who returns to finish the survey later
+            # keeps writing into the same row even after their answers have
+            # overwritten the name columns.
+            row_num = self.find_resident_row_by_user_id(user_id)
+            if not row_num:
+                row_num = self.find_resident_row_by_name(first_name, last_name)
             if not row_num:
                 row_num = self.add_resident_row(first_name, last_name)
 
@@ -239,14 +274,11 @@ class SheetsService:
             # Collect updates
             updates = []
 
-            # Add first name and last name
+            # Stamp the Telegram user id so every later answer resolves to this
+            # exact row. Name columns are left to the survey answers themselves.
             updates.append({
-                "range": f"Резиденты!A{row_num}",
-                "values": [[first_name]]
-            })
-            updates.append({
-                "range": f"Резиденты!B{row_num}",
-                "values": [[last_name]]
+                "range": f"Резиденты!AA{row_num}",
+                "values": [[str(user_id)]]
             })
 
             # Add survey responses
