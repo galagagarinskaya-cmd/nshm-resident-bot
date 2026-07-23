@@ -275,7 +275,7 @@ async def show_survey_complete_final(context: ContextTypes.DEFAULT_TYPE, user_id
     await context.bot.send_message(chat_id=user_id, text=complete_text)
 
     # Send final circle video (Kolya)
-    final_video = "videos/survey_final_kolya.mov"
+    final_video = "videos/survey_final_kolya.mp4"
     try:
         with open(final_video, "rb") as video_file:
             try:
