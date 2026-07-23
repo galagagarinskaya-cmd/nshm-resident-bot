@@ -94,7 +94,10 @@ async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_
                         InlineKeyboardButton("Про сообщество", url="https://t.me/c/1914063685/480"),
                         InlineKeyboardButton("Треки в коммьюнити", url="https://t.me/c/1914063685/494")
                     ],
-                    [InlineKeyboardButton("Давай начнем!", callback_data="start_rules")]
+                    # Deep link, not callback_data: a brand-new member has never
+                    # started the bot, and Telegram forbids the bot from writing
+                    # first. The link opens the bot chat so it can reply.
+                    [InlineKeyboardButton("Давай начнем!", url="https://t.me/nshm_residents_bot?start=rules")]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
 
