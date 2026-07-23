@@ -18,8 +18,15 @@ class SheetsService:
     def init_service(self, credentials_path: str = None):
         """Initialize Google Sheets API service"""
         try:
-            # Try to load from environment variable first (Railway)
+            # Try to load from environment variable first (Railway).
+            # The service-account JSON may be stored under GOOGLE_CREDENTIALS or,
+            # as on this Railway project, under GOOGLE_CREDENTIALS_PATH (which
+            # despite its name holds the JSON content itself, not a file path).
             creds_json = os.getenv("GOOGLE_CREDENTIALS")
+            if not creds_json:
+                _maybe = os.getenv("GOOGLE_CREDENTIALS_PATH", "")
+                if _maybe.strip().startswith("{"):
+                    creds_json = _maybe
             if creds_json:
                 import json as json_module
                 creds_dict = json_module.loads(creds_json)
