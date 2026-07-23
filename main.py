@@ -479,8 +479,19 @@ def main():
     )
     scheduler.start()
 
+    # Wait for any previous container's getUpdates poller to fully release
+    # before we start polling. Railway overlaps the old and new container
+    # during a deploy; without this delay the new poller hits a Telegram
+    # "Conflict: terminated by other getUpdates request" at startup, which
+    # PTB 20.0 does not recover from (polling silently dies).
+    startup_delay = int(os.getenv("STARTUP_DELAY", "30"))
+    if startup_delay > 0:
+        logger.info(f"⏳ Waiting {startup_delay}s for previous instance to release polling...")
+        import time
+        time.sleep(startup_delay)
+
     logger.info("🚀 Bot started")
-    application.run_polling()
+    application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
