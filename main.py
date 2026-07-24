@@ -286,7 +286,7 @@ async def announce_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Send announcement to group
     text = (
-        "Приветик, новенький! \n\n"
+        "Привет, резидент!\n\n"
         "Чтобы открыть все возможности (<tg-spoiler>например, писать хаха</tg-spoiler>), "
         "сначала загляни в нашего бота. Там тебя ждут правила сообщества, полезная навигация "
         "и <i>всё, что нужно знать, чтобы быстро влиться в комьюнити</i>\n\n"
