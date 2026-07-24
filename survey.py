@@ -1,4 +1,5 @@
 import logging
+import html
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.error import TelegramError
@@ -12,66 +13,93 @@ logger = logging.getLogger(__name__)
 db = Database()
 sheets = SheetsService()
 
-# Видео кружков перед каждым блоком
+# Видео кружков в конце каждого блока
 CIRCLE_VIDEOS = {
     1: "videos/survey_block1_gala.mp4",
     2: "videos/survey_block2_roma.mp4",
     3: "videos/survey_block3_nika.mp4",
-    4: "videos/survey_block4_alina.mp4",
-    5: "videos/survey_block5_yulia.mp4",
+    4: "videos/survey_block4_lisa.mp4",
+    5: "videos/survey_final_kolya.mp4",
 }
 
-# Survey questions structure
+CIRCLE_NAMES = {1: "Гала 🎬", 2: "Рома 🎬", 3: "Ника 🎬", 4: "Лиза 🎬", 5: "Коля 🎬"}
+
+# Структура опроса: каждый вопрос — {"q": текст, "hint": подсказка в скобках}
 SURVEY_BLOCKS = {
     1: {
-        "title": "Блок 1: Твоё ID (База)",
+        "title": "Блок 1: Твоё ID (БАЗА)",
         "questions": [
-            "Как тебя зовут в реале? (укажи Ф.И.О. полностью для титров и документов)",
-            "Когда у тебя ДР? (формат: ДД.MM.ГГГГ)",
-            "Твой номер телефона (чтобы мы тебя не теряли)",
-            "Твой ник в Telegram (для закрытых чатов и лички)",
-            "Ссылка на профиль ВКонтакте (это БАЗА)",
-            "Где живешь? (регион(-ы) и город(-а) твоего постоянного проживания)"
+            {"q": "Как тебя зовут в реале? (укажи ФИО полностью для титров и документов)",
+             "hint": "напиши ответ текстом"},
+            {"q": "Когда у тебя ДР?",
+             "hint": "напиши в формате ДД.ММ.ГГГГ"},
+            {"q": "Твой номер телефона (чтобы мы тебя не теряли)",
+             "hint": "напиши в формате 8 (XXX) XXX-XX-XX"},
+            {"q": "Твой ник в Telegram (для закрытых чатов и лички)",
+             "hint": "напиши в формате @НИК"},
+            {"q": "Ссылка на профиль ВКонтакте (это БАЗА ахаха)",
+             "hint": "пример: https://vk.ru/newschoolmediaa"},
+            {"q": "Где живешь? (регион(-ы) и город(-а) твоего постоянного проживания)",
+             "hint": "пример: г.Новокузнецк, Кемеровская область (летом); г.Домодедово, Московская область (весь рабочий год)"},
         ]
     },
     2: {
-        "title": "Блок 2: Твой путь (Учеба и работа)",
+        "title": "Блок 2: Твой путь (study and work)",
         "questions": [
-            "Твой текущий левел в учебе? (школа / колледж / вуз — укажи класс или курс)",
-            "Твоя роль в медиа будущего? (на кого учишься или кем реально хочешь стать?)",
-            "Воркаешь где-то прямо сейчас? (да / нет / фриланс)",
-            "Если да — где? (напиши название команды или организации)",
-            "Мутишь свой блог, формат или рубрику? Кидай ссылку, заценим твой контент!"
+            {"q": "Твой текущий левел в учебе? (школа/колледж/вуз — укажи название заведение, специальность и класс или курс)",
+             "hint": "пример: РЭУ им.Плеханова, Медиакоммуникации («Продюсирование в кино и медиа»), 2 курс"},
+            {"q": "Кем хочешь работать в будущем?",
+             "hint": "пример: продюсер; дизайнер; монтажер"},
+            {"q": "Работаешь где-то прямо сейчас?",
+             "hint": "пиши один из вариантов: да / нет / фриланс"},
+            {"q": "Если ты ответил «да» или «фриланс» в предыдущем вопросе, то расскажи плиз немного подробнее: где и кем?",
+             "hint": "пример: Коммьюнити-менеджер в НШМ VK"},
+            {"q": "Ведешь свой блог, формат или рубрику?",
+             "hint": "кидай ссылки на соцсети, где делаешь контент, заценим"},
         ]
     },
     3: {
         "title": "Блок 3: Твой бэкграунд в НШМ VK",
         "questions": [
-            "В каких движах НШМ ты уже был? (вспомни все марафоны и ивенты, где ты был)",
-            "Твоя главная цель в комьюнити прямо сейчас? Чего ждешь от «своих»?",
-            "Насколько вероятно, что ты посоветуешь наш стать резидентом своим знакомым? (оцени от 0 до 10, где 10 — «уже всем советую»)"
+            {"q": "В каких движах НШМ ты уже был?",
+             "hint": "постарайся вспомнить и прописать все марафоны и ивенты, где ты был"},
+            {"q": "Твоя главная цель в комьюнити прямо сейчас? Чего ждешь от «своих»?",
+             "hint": "это нам поможет создавать мероприятия и активности, которые идеально будут тебе подходить"},
+            {"q": "Насколько вероятно, что ты посоветуешь стать резидентом своим знакомым?",
+             "hint": "оцени от 0 до 10, где 10 — «уже давно всем советую»"},
         ]
     },
     4: {
         "title": "Блок 4: Твой вайб",
         "questions": [
-            "Где чекаешь новости? (твои главные источники, чтобы быть в курсе)",
-            "За какими блогерами следишь?",
-            "В каких соцсетях зависаешь чаще всего?",
-            "Твой топ-3 TG-каналов прямо сейчас?",
-            "Три канала на YouTube, которые всегда в реках?",
-            "Любимые сообщества во ВКонтакте, куда заходишь каждый день?",
-            "Что слушаешь? Напиши топ-3 исполнителя, которых слушаешь 24/7"
+            {"q": "Где чекаешь новости?",
+             "hint": "присылай ссылки на твои главные источники, чтобы быть в курсе"},
+            {"q": "За какими блогерами следишь?",
+             "hint": "присылай ссылки на тех, кого любишь"},
+            {"q": "В каких соцсетях зависаешь чаще всего?",
+             "hint": "например: ВКонтакте, ТикТок, и т.д."},
+            {"q": "Твой топ-3 TG-, YouTube-каналов и сообществ ВКонтакте",
+             "hint": "присылай в формате TG: 1)ссылка, 2)ссылка, 3)ссылка; YouTube: 1)ссылка, 2)ссылка, 3)ссылка; ВКонтакте: 1)ссылка, 2)ссылка, 3)ссылка"},
+            {"q": "Что слушаешь?",
+             "hint": "напиши топ-3 исполнителя, которых слушаешь 24/7"},
         ]
     },
     5: {
         "title": "Блок 5: Level Up",
         "questions": [
-            "Каких знаний тебе реально не хватило, когда начал практиковаться после обучения? (честно про hard- and soft-skills)",
-            "Если завтра запустим новый курс, какая тема тебе зайдет?"
+            {"q": "Каких знаний тебе реально не хватило, когда начал практиковаться после обучения?",
+             "hint": "тут напиши честно про hard- and soft-skills"},
+            {"q": "Если завтра мы будем запускать новый курс, какая тема тебе зайдет?",
+             "hint": "например: нейронки, дизайн, борьба с социофобией"},
         ]
     }
 }
+
+
+def _question_text(block: int, question_idx: int) -> str:
+    """Return a single question's text (for saving to the DB)."""
+    return SURVEY_BLOCKS[block]["questions"][question_idx]["q"]
+
 
 async def send_survey_intro(bot, user_id: int):
     """Send survey introduction after 3 days"""
@@ -95,13 +123,13 @@ async def send_survey_intro(bot, user_id: int):
     except TelegramError as e:
         logger.info(f"Cannot send survey intro to user {user_id} (bot hasn't been contacted): {e}")
 
+
 async def show_block_circle(context: ContextTypes.DEFAULT_TYPE, user_id: int, block: int):
     """Send circle video at end of block"""
     if block not in CIRCLE_VIDEOS:
         return
 
     video_path = CIRCLE_VIDEOS[block]
-    circle_names = {1: "Гала 🎬", 2: "Рома 🎬", 3: "Ника 🎬", 4: "Алина 🎬", 5: "Юля 🎬"}
 
     try:
         with open(video_path, "rb") as video_file:
@@ -129,6 +157,7 @@ async def show_block_circle(context: ContextTypes.DEFAULT_TYPE, user_id: int, bl
     except TelegramError as e:
         logger.error(f"Error sending circle video: {e}")
 
+
 async def start_survey_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start survey questions after intro"""
     query = update.callback_query
@@ -138,8 +167,9 @@ async def start_survey_questions(update: Update, context: ContextTypes.DEFAULT_T
     # Show first question
     await show_survey_question(user_id, context, block=1, question_idx=0)
 
+
 async def start_survey(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start survey"""
+    """Start survey — go straight into the questions (no intro message)."""
     query = update.callback_query
     user_id = query.from_user.id
 
@@ -148,20 +178,14 @@ async def start_survey(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Mark survey as sent
     db.mark_survey_sent(user_id)
 
-    # Notify user survey started
-    intro_text = """Приветик! Как твоя первая неделя в НШМ? Надеемся, ты уже осваиваешься и чувствуешь себя среди своих 🫶
+    # Straight to the first question — the old intro message is removed.
+    await show_survey_question(user_id, context, block=1, question_idx=0)
 
-Теперь давайте пройдём опрос — это займет всего пару минут. Нам оч важно иметь твою актуальную инфу под рукой!"""
-
-    keyboard = [[InlineKeyboardButton("🚀 ГААААЗ", callback_data="survey_start_questions")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await context.bot.send_message(chat_id=user_id, text=intro_text, reply_markup=reply_markup)
 
 async def show_survey_question(user_id: int, context: ContextTypes.DEFAULT_TYPE, block: int, question_idx: int):
     """Show survey question and wait for text answer"""
     if block not in SURVEY_BLOCKS:
-        # Survey complete - show final video
+        # Survey complete
         await show_survey_complete_final(context, user_id)
         return
 
@@ -175,28 +199,35 @@ async def show_survey_question(user_id: int, context: ContextTypes.DEFAULT_TYPE,
         await show_survey_question(user_id, context, block + 1, 0)
         return
 
-    question = questions[question_idx]
-    full_text = f"{block_data['title']}\n\nВопрос {question_idx + 1}/{len(questions)}:\n\n{question}"
+    q = questions[question_idx]
+    qline = f"Вопрос {question_idx + 1}/{len(questions)}:"
+    full_text = (
+        f"{html.escape(block_data['title'])}\n\n"
+        f"<code>{html.escape(qline)}</code>\n"
+        f"<blockquote>{html.escape(q['q'])}</blockquote>\n\n"
+        f"[{html.escape(q['hint'])}]"
+    )
 
-    # Add back button if not first question
+    # "Back" button on every question except the very first one
+    reply_markup = None
     if question_idx > 0 or block > 1:
-        keyboard = [[InlineKeyboardButton("← Назад", callback_data=f"survey_back:{block}:{question_idx}")]]
+        keyboard = [[InlineKeyboardButton(
+            "Нажми, если ошибся в предыдущем вопросе",
+            callback_data=f"survey_back:{block}:{question_idx}"
+        )]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=full_text,
-            reply_markup=reply_markup
-        )
-    else:
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=full_text + "\n\n_(Напиши ответ текстом)_",
-            parse_mode="Markdown"
-        )
+
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=full_text,
+        reply_markup=reply_markup,
+        parse_mode="HTML"
+    )
 
     # Store current state
     state_data = json.dumps({"block": block, "question_idx": question_idx})
     db.set_user_state(user_id, "survey_question", block, state_data)
+
 
 async def handle_survey_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle text answer from user"""
@@ -224,7 +255,7 @@ async def handle_survey_answer(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     # Save answer
-    question = SURVEY_BLOCKS[block]["questions"][question_idx]
+    question = _question_text(block, question_idx)
     db.save_survey_response(user_id, block, question_idx, question, answer_text)
     logger.info(f"✅ Saved answer from user {user_id}: block {block}, q {question_idx}")
 
@@ -242,6 +273,7 @@ async def handle_survey_answer(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # Move to next question
     await show_survey_question(user_id, context, block, question_idx + 1)
+
 
 async def handle_survey_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle back button to edit previous answer"""
@@ -263,54 +295,14 @@ async def handle_survey_back(update: Update, context: ContextTypes.DEFAULT_TYPE)
         prev_questions_count = len(SURVEY_BLOCKS[prev_block]["questions"])
         await show_survey_question(user_id, context, prev_block, prev_questions_count - 1)
 
-async def handle_survey_response(update: Update, context: ContextTypes.DEFAULT_TYPE, answer: str):
-    """Handle user's survey response"""
-    user_id = update.effective_user.id
-
-    state = db.get_user_state(user_id)
-
-    if state:
-        state_data = json.loads(state["data"]) if state["data"] else {}
-        block = state_data.get("block", 1)
-        question_idx = state_data.get("question_idx", 0)
-
-        if block in SURVEY_BLOCKS:
-            question = SURVEY_BLOCKS[block]["questions"][question_idx]
-            db.save_survey_response(user_id, block, question, answer)
 
 async def show_survey_complete_final(context: ContextTypes.DEFAULT_TYPE, user_id: int):
-    """Show survey completion with final video"""
-    complete_text = """Спасибо за прохождение опроса! 🫶
+    """Show survey completion (the block-5 circle already played before this)."""
+    complete_text = """Спасибо за прохождение опроса 🫶
 
-Мы получили всю нужную информацию и скоро свяжемся с тобой по поводу персональных возможностей в проекте."""
+Мы получили всю нужную инфу, теперь, как только появятся крутые события и возможности по твоим интересам, будем присылать именно тебе"""
 
     await context.bot.send_message(chat_id=user_id, text=complete_text)
-
-    # Send final circle video (Kolya)
-    final_video = "videos/survey_final_kolya.mp4"
-    try:
-        with open(final_video, "rb") as video_file:
-            try:
-                await context.bot.send_video_note(
-                    chat_id=user_id,
-                    video_note=video_file,
-                    duration=60
-                )
-                logger.info(f"Sent final circle video (video_note) to user {user_id}")
-            except TelegramError as e:
-                if "Voice_messages_forbidden" in str(e) or "video_notes_forbidden" in str(e):
-                    video_file.seek(0)
-                    await context.bot.send_video(
-                        chat_id=user_id,
-                        video=video_file
-                    )
-                    logger.info(f"Sent final circle video (regular video) to user {user_id}")
-                else:
-                    raise
-    except FileNotFoundError:
-        logger.error(f"Final video not found: {final_video}")
-    except TelegramError as e:
-        logger.error(f"Error sending final circle video: {e}")
 
     # Sync all survey responses to Google Sheets
     db = Database()
@@ -349,56 +341,3 @@ async def show_survey_complete_final(context: ContextTypes.DEFAULT_TYPE, user_id
             logger.error(f"Error sending admin notification: {e}")
 
     db.set_user_state(user_id, "survey_complete")
-
-async def show_survey_complete(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show survey completion message"""
-    query = update.callback_query
-    user_id = query.from_user.id
-
-    # Send final circle video (Kolyа)
-    final_video = "videos/survey_final_kolya.mp4"
-    try:
-        with open(final_video, "rb") as video_file:
-            await context.bot.send_video_note(
-                chat_id=user_id,
-                video_note=video_file,
-                duration=60
-            )
-        logger.info(f"Sent final circle video (Kolyа) to user {user_id}")
-    except FileNotFoundError:
-        logger.error(f"Final video not found: {final_video}")
-    except TelegramError as e:
-        logger.error(f"Error sending final circle video: {e}")
-
-    complete_text = """Спасибо за прохождение опроса! 🫶
-
-Мы получили всю нужную информацию и скоро свяжемся с тобой по поводу персональных возможностей в проекте."""
-
-    keyboard = [[InlineKeyboardButton("Спасибо!", callback_data="survey_done")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    try:
-        await query.edit_message_text(
-            text=complete_text,
-            reply_markup=reply_markup
-        )
-    except TelegramError as e:
-        logger.error(f"Error showing survey complete: {e}")
-
-    # Notify admins
-    from config import TELEGRAM_ADMIN_IDS
-    from database import Database
-    db = Database()
-    user_info = db.get_user(user_id)
-
-    admin_message = f"✅ Резидент завершил опрос:\n\n{user_info['first_name']} {user_info['last_name']}"
-
-    for admin_id in TELEGRAM_ADMIN_IDS:
-        try:
-            await context.bot.send_message(chat_id=admin_id, text=admin_message)
-        except TelegramError as e:
-            logger.error(f"Error sending admin notification: {e}")
-
-    # Update sheets
-    survey_responses = db.get_survey_responses(user_id)
-    # TODO: Sync to Google Sheets
