@@ -24,6 +24,10 @@ CIRCLE_VIDEOS = {
 
 CIRCLE_NAMES = {1: "Гала 🎬", 2: "Рома 🎬", 3: "Ника 🎬", 4: "Лиза 🎬", 5: "Коля 🎬"}
 
+# Политика обработки персональных данных (шаг согласия перед опросом)
+CONSENT_PDF = "personal_data_policy.pdf"
+CONSENT_PDF_NAME = "О персональных данных.pdf"
+
 # Структура опроса: каждый вопрос — {"q": текст, "hint": подсказка в скобках}
 SURVEY_BLOCKS = {
     1: {
@@ -169,7 +173,7 @@ async def start_survey_questions(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def start_survey(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start survey — go straight into the questions (no intro message)."""
+    """Start survey — first show the personal-data consent gate."""
     query = update.callback_query
     user_id = query.from_user.id
 
@@ -178,8 +182,64 @@ async def start_survey(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Mark survey as sent
     db.mark_survey_sent(user_id)
 
-    # Straight to the first question — the old intro message is removed.
+    # Consent gate first; the actual questions start only after «Согласен».
+    await send_consent_request(context, user_id)
+
+
+async def send_consent_request(context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    """Send the personal-data policy PDF with Согласен / Не согласен buttons."""
+    consent_text = ("Но! Прежде чем мы пришлем тебе опрос, нужно сделать небольшую формальность: "
+                    "внимательно ознакомься с политикой обработки персональных данных, чтобы продолжить")
+    keyboard = [[
+        InlineKeyboardButton("Согласен ✅", callback_data="consent_agree"),
+        InlineKeyboardButton("Не согласен ❌", callback_data="consent_disagree"),
+    ]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    try:
+        with open(CONSENT_PDF, "rb") as pdf:
+            await context.bot.send_document(
+                chat_id=user_id,
+                document=pdf,
+                filename=CONSENT_PDF_NAME,
+                caption=consent_text,
+                reply_markup=reply_markup,
+            )
+        logger.info(f"📄 Sent consent request to user {user_id}")
+    except FileNotFoundError:
+        logger.error(f"Consent PDF not found: {CONSENT_PDF}")
+        # Still ask for consent even if the file is missing
+        await context.bot.send_message(chat_id=user_id, text=consent_text, reply_markup=reply_markup)
+    except TelegramError as e:
+        logger.error(f"Error sending consent request to {user_id}: {e}")
+
+
+async def consent_agree(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User agreed to the data policy → start the survey questions."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
     await show_survey_question(user_id, context, block=1, question_idx=0)
+
+
+async def consent_disagree(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User declined the data policy."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+
+    text = ("Ох, окей, поняли тебя. Значит, к сожалению, пока не сможем присылать тебе "
+            "персональные возможности(\n\nЕсли передумаешь, то кнопка ниже ждёт тебя 🫶🏻")
+    keyboard = [[InlineKeyboardButton("Вернуться назад", callback_data="consent_back")]]
+    await context.bot.send_message(chat_id=user_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def consent_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User changed their mind → show the consent request again."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+    await send_consent_request(context, user_id)
 
 
 async def show_survey_question(user_id: int, context: ContextTypes.DEFAULT_TYPE, block: int, question_idx: int):
@@ -202,17 +262,17 @@ async def show_survey_question(user_id: int, context: ContextTypes.DEFAULT_TYPE,
     q = questions[question_idx]
     qline = f"Вопрос {question_idx + 1}/{len(questions)}:"
     full_text = (
-        f"{html.escape(block_data['title'])}\n\n"
+        f"<b>{html.escape(block_data['title'])}</b>\n\n"
         f"<code>{html.escape(qline)}</code>\n"
         f"<blockquote>{html.escape(q['q'])}</blockquote>\n\n"
-        f"[{html.escape(q['hint'])}]"
+        f"<i>[{html.escape(q['hint'])}]</i>"
     )
 
     # "Back" button on every question except the very first one
     reply_markup = None
     if question_idx > 0 or block > 1:
         keyboard = [[InlineKeyboardButton(
-            "Нажми, если ошибся в предыдущем вопросе",
+            "Нажми, если ошибся в вопросе",
             callback_data=f"survey_back:{block}:{question_idx}"
         )]]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -298,11 +358,13 @@ async def handle_survey_back(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def show_survey_complete_final(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     """Show survey completion (the block-5 circle already played before this)."""
-    complete_text = """Спасибо за прохождение опроса 🫶
+    complete_text = (
+        "Спасибо за прохождение опроса 🫶\n\n"
+        "Мы получили всю нужную инфу, теперь, <i>как только появятся крутые события "
+        "и возможности по твоим интересам, будем присылать именно тебе</i>"
+    )
 
-Мы получили всю нужную инфу, теперь, как только появятся крутые события и возможности по твоим интересам, будем присылать именно тебе"""
-
-    await context.bot.send_message(chat_id=user_id, text=complete_text)
+    await context.bot.send_message(chat_id=user_id, text=complete_text, parse_mode="HTML")
 
     # Sync all survey responses to Google Sheets
     db = Database()
