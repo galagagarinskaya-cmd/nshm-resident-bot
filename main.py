@@ -285,11 +285,13 @@ async def announce_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Send announcement to group
-    text = """🔔 **ВАЖНО для всех участников**
-
-Чтобы активировать доступ в чат, нужно принять правила сообщества.
-
-Нажми кнопку ниже 👇"""
+    text = (
+        "Приветик, новенький! \n\n"
+        "Чтобы открыть все возможности (<tg-spoiler>например, писать хаха</tg-spoiler>), "
+        "сначала загляни в нашего бота. Там тебя ждут правила сообщества, полезная навигация "
+        "и <i>всё, что нужно знать, чтобы быстро влиться в комьюнити</i>\n\n"
+        "<i>Жми на кнопку ниже, изучай правила и становись полноценной частью НШМ VK 🚀</i>"
+    )
 
     # A deep link, not callback_data: the button must OPEN the bot. Telegram
     # forbids a bot from writing first to someone who has never started it, so
@@ -305,7 +307,7 @@ async def announce_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id=TELEGRAM_CHAT_ID,
             text=text,
             reply_markup=reply_markup,
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
         await update.message.reply_text("✅ Сообщение отправлено в группу!")
         logger.info(f"Admin {user_id} sent rules announcement to group")
