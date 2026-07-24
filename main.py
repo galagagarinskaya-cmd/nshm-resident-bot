@@ -17,7 +17,10 @@ from survey import (
     start_survey as survey_start_survey,
     start_survey_questions,
     handle_survey_answer,
-    handle_survey_back
+    handle_survey_back,
+    consent_agree,
+    consent_disagree,
+    consent_back,
 )
 
 logging.basicConfig(
@@ -183,13 +186,15 @@ async def show_rule_card(update: Update, context: ContextTypes.DEFAULT_TYPE, blo
         logger.error(f"❌ Error sending cards: {e}")
         return
 
-    # Show accept button after all cards
-    keyboard = [[InlineKeyboardButton("Я внимательно прочитал правила и согласен с ними ✅", callback_data=f"accept_rule:{block_num}")]]
+    # Show accept button after all cards.
+    # Telegram truncates a button to the width of its message bubble, so the
+    # message text is kept wide enough for the full button label to show.
+    keyboard = [[InlineKeyboardButton("Прочитал правила и согласен с ними ✅", callback_data=f"accept_rule:{block_num}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await context.bot.send_message(
         chat_id=user_id,
-        text=f"📖 Ты прочитал все правила раздела {block_num}",
+        text=f"📖 Ты прочитал все правила раздела {block_num}\n\nЕсли всё понятно — жми кнопку ниже 👇",
         reply_markup=reply_markup
     )
 
@@ -465,6 +470,9 @@ def main():
     application.add_handler(CallbackQueryHandler(navigate_cards, pattern="^rule_card:"))
     application.add_handler(CallbackQueryHandler(accept_rule, pattern="^accept_rule:"))
     application.add_handler(CallbackQueryHandler(survey_start_survey, pattern="^start_survey$"))
+    application.add_handler(CallbackQueryHandler(consent_agree, pattern="^consent_agree$"))
+    application.add_handler(CallbackQueryHandler(consent_disagree, pattern="^consent_disagree$"))
+    application.add_handler(CallbackQueryHandler(consent_back, pattern="^consent_back$"))
     application.add_handler(CallbackQueryHandler(start_survey_questions, pattern="^survey_start_questions$"))
     application.add_handler(CallbackQueryHandler(handle_survey_back, pattern="^survey_back:"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_survey_answer), group=1)
