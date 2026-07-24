@@ -130,7 +130,7 @@ async def start_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Send intro message in DM
-    intro_text = """По кнопкам ниже ты можешь подробнее почитать про сообщество и про треки в коммьюнити. А если сразу хочешь начать заполнять анкету, нажимай «Давайте начнём!» (эта кнопка в первом сообщении)"""
+    intro_text = """Скорее читай про сообщество и треки в комьюнити по кнопкам ниже, а затем изучай карточки ниже, где подробно описали, «что здесь можно, нужно и нельзя делать»"""
 
     try:
         keyboard = [
@@ -184,7 +184,7 @@ async def show_rule_card(update: Update, context: ContextTypes.DEFAULT_TYPE, blo
         return
 
     # Show accept button after all cards
-    keyboard = [[InlineKeyboardButton("✅ Принимаю правила", callback_data=f"accept_rule:{block_num}")]]
+    keyboard = [[InlineKeyboardButton("Я внимательно прочитал правила и согласен с ними ✅", callback_data=f"accept_rule:{block_num}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await context.bot.send_message(
@@ -222,7 +222,7 @@ async def accept_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"❌ Error unlocking: {e}")
 
         # First message — welcome to community
-        welcome_message = "Кайфы! Теперь для тебя всё открыто. Если будут вопросы — пиши в чатик или в @info_nshm, велком ту зе клаб 🫶"
+        welcome_message = "Кайфы! Теперь для тебя всё открыто! Если будут вопросы — пиши в чатик или в @info_nshm, велком ту зе клаб 🫶"
 
         try:
             await context.bot.send_message(chat_id=user_id, text=welcome_message)
@@ -231,7 +231,7 @@ async def accept_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"❌ Error sending welcome message: {e}")
 
         # Second message — survey invitation with button
-        survey_text = "Теперь давайте пройдём опрос чтобы мы могли предложить тебе самые интересные проекты 👇"
+        survey_text = "Теперь давай пройдём опрос, чтобы мы могли предлагать тебе самые вайбовые проекты 👇"
         keyboard = [[InlineKeyboardButton("Начать опрос", callback_data="start_survey")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -332,11 +332,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # In group - show welcome
         welcome_text = """Приветик! Поздравляем, теперь ты в комьюнити самых крутых зумеров в медиа 🫶
 
-Скорее читай про сообщество и треки в комьюнити, а затем изучай карточки ниже, где подробно описали, "что здесь можно, нужно и нельзя делать"
-
 Для продолжения нажми кнопку ниже 👇"""
 
-        keyboard = [[InlineKeyboardButton("Давайте начнём!", callback_data="start_rules")]]
+        keyboard = [[InlineKeyboardButton("ГАААЗ!", callback_data="start_rules")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await context.bot.send_message(chat_id=user.id, text=welcome_text, reply_markup=reply_markup)
@@ -370,11 +368,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             welcome_text = """Приветик! Поздравляем, теперь ты в комьюнити самых крутых зумеров в медиа 🫶
 
-Скорее читай про сообщество и треки в комьюнити, а затем изучай карточки ниже, где подробно описали, "что здесь можно, нужно и нельзя делать"
-
 Для продолжения нажми кнопку ниже 👇"""
 
-            keyboard = [[InlineKeyboardButton("Давайте начнём!", callback_data="start_rules")]]
+            keyboard = [[InlineKeyboardButton("ГАААЗ!", callback_data="start_rules")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             await context.bot.send_message(chat_id=user.id, text=welcome_text, reply_markup=reply_markup)
