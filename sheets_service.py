@@ -9,11 +9,67 @@ from database import Database
 logger = logging.getLogger(__name__)
 
 class SheetsService:
+    # Columns needed on the Резиденты sheet. AA holds the tg_id technical key,
+    # so the grid must have at least 27 columns or writes fail with
+    # "exceeds grid limits" and the whole sync silently breaks.
+    MIN_COLUMNS = 28
+    RESIDENTS_SHEET = "Резиденты"
+
     def __init__(self, credentials_path: str = None):
         self.sheets_id = SHEETS_ID
         self.service = None
         self.db = Database()
+        self._columns_ensured = False
         self.init_service(credentials_path)
+
+    def _ensure_grid_columns(self):
+        """Make sure the Резиденты sheet is wide enough (>= MIN_COLUMNS).
+
+        Self-healing: if the sheet ever has too few columns (which is what broke
+        sync when the tg_id key column AA did not exist), expand it automatically.
+        Cached so the metadata call runs at most once per process.
+        """
+        if not self.service or self._columns_ensured:
+            return
+        try:
+            meta = self.service.spreadsheets().get(spreadsheetId=self.sheets_id).execute()
+            for s in meta.get("sheets", []):
+                p = s.get("properties", {})
+                if p.get("title") == self.RESIDENTS_SHEET:
+                    cc = p.get("gridProperties", {}).get("columnCount", 0)
+                    if cc < self.MIN_COLUMNS:
+                        self.service.spreadsheets().batchUpdate(
+                            spreadsheetId=self.sheets_id,
+                            body={"requests": [{"appendDimension": {
+                                "sheetId": p.get("sheetId"),
+                                "dimension": "COLUMNS",
+                                "length": self.MIN_COLUMNS - cc,
+                            }}]},
+                        ).execute()
+                        logger.info(f"Expanded {self.RESIDENTS_SHEET} sheet to {self.MIN_COLUMNS} columns")
+                    self._columns_ensured = True
+                    return
+        except Exception as e:
+            logger.error(f"Could not ensure grid columns: {e}")
+
+    def _write_updates(self, updates):
+        """Write a batch of cell updates, self-healing on grid-limit errors."""
+        body = {"data": updates, "valueInputOption": "RAW"}
+        try:
+            self.service.spreadsheets().values().batchUpdate(
+                spreadsheetId=self.sheets_id, body=body
+            ).execute()
+        except Exception as e:
+            # A too-small grid raises "exceeds grid limits" — expand and retry once.
+            if "grid limit" in str(e).lower() or "exceeds" in str(e).lower():
+                logger.warning("Write hit grid limits — expanding sheet and retrying")
+                self._columns_ensured = False
+                self._ensure_grid_columns()
+                self.service.spreadsheets().values().batchUpdate(
+                    spreadsheetId=self.sheets_id, body=body
+                ).execute()
+            else:
+                raise
 
     def init_service(self, credentials_path: str = None):
         """Initialize Google Sheets API service"""
@@ -224,6 +280,9 @@ class SheetsService:
             # stable key, so a resident who returns to finish the survey later
             # keeps writing into the same row even after their answers have
             # overwritten the name columns.
+            # Make sure the grid is wide enough before we touch column AA.
+            self._ensure_grid_columns()
+
             row_num = self.find_resident_row_by_user_id(user_id)
             if not row_num:
                 row_num = self.find_resident_row_by_name(first_name, last_name)
@@ -293,16 +352,9 @@ class SheetsService:
                         "values": [[answer]]
                     })
 
-            # Execute batch update
+            # Execute batch update (self-healing on grid-limit errors)
             if updates:
-                body = {
-                    "data": updates,
-                    "valueInputOption": "RAW"
-                }
-                self.service.spreadsheets().values().batchUpdate(
-                    spreadsheetId=self.sheets_id,
-                    body=body
-                ).execute()
+                self._write_updates(updates)
                 logger.info(f"Synced {len(updates)} responses for user {user_id} (row {row_num})")
                 return True
 
