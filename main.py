@@ -328,6 +328,38 @@ async def restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔄 Перезапущен процесс принятия правил!\n\nНажми /start чтобы начать заново.")
     logger.info(f"🔄 User {user_id} restarted rules acceptance")
 
+async def resync(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: push every stored survey response from the server DB to the sheet."""
+    user_id = update.effective_user.id
+    if user_id not in TELEGRAM_ADMIN_IDS:
+        await update.message.reply_text("❌ Эта команда доступна только администраторам")
+        return
+
+    import sqlite3
+    conn = sqlite3.connect(db.db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT DISTINCT user_id FROM survey_responses")
+    user_ids = [row[0] for row in cursor.fetchall()]
+    conn.close()
+
+    await update.message.reply_text(f"🔄 Синхронизирую {len(user_ids)} резидент(ов) с таблицей...")
+    logger.info(f"🔄 Admin {user_id} started full resync of {len(user_ids)} users")
+
+    ok, fail = 0, 0
+    for uid in user_ids:
+        try:
+            responses = db.get_survey_responses(uid)
+            if responses and sheets.sync_survey_responses(uid, responses):
+                ok += 1
+            else:
+                fail += 1
+        except Exception as e:
+            logger.error(f"Resync failed for user {uid}: {e}")
+            fail += 1
+
+    await update.message.reply_text(f"✅ Готово!\n\nСинхронизировано: {ok}\nНе удалось: {fail}")
+    logger.info(f"✅ Resync done: ok={ok}, fail={fail}")
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command"""
     user = update.effective_user
@@ -466,6 +498,7 @@ def main():
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members))
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("restart", restart))
+    application.add_handler(CommandHandler("resync", resync))
     application.add_handler(CommandHandler("announce_rules", announce_rules))
     application.add_handler(CallbackQueryHandler(bot_start_handler, pattern="^bot_start$"))
     application.add_handler(CallbackQueryHandler(start_rules, pattern="^start_rules$"))
