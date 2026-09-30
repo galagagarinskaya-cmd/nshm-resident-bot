@@ -9,62 +9,146 @@ from database import Database
 logger = logging.getLogger(__name__)
 
 class SheetsService:
-    # Columns needed on the Резиденты sheet. AA holds the tg_id technical key,
-    # so the grid must have at least 27 columns or writes fail with
-    # "exceeds grid limits" and the whole sync silently breaks.
-    MIN_COLUMNS = 28
     RESIDENTS_SHEET = "Резиденты"
+
+    # Technical key column: the Telegram user id is stamped here so a resident
+    # always resolves to the same row. Referenced BY HEADER NAME, never by a
+    # fixed letter — колонки в таблице двигаются, а поиск по имени заголовка нет.
+    TG_ID_HEADER = "tg_id"
+    # Column that holds the resident's full name.
+    NAME_HEADER = "ФИО"
+
+    # Survey answer -> sheet column, mapped BY HEADER NAME (not by letter).
+    # If a column is renamed/moved/deleted, sync keeps working (missing headers
+    # are skipped with a warning instead of writing into the wrong column).
+    COLUMN_MAP = {
+        1: {  # Блок 1: Твоё ID
+            0: "ФИО",              # Как тебя зовут
+            1: "День рождения",    # ДР
+            2: "Телефон",          # Телефон
+            3: "Ник в Telegram",   # Ник Telegram
+            4: "Профиль в ВК",     # ВК
+            5: "Регион",           # Регион
+        },
+        2: {  # Блок 2: Твой путь
+            0: "Учеба",
+            1: "Профессия",
+            2: "Статус работы",
+            3: "Место работы",
+            4: "Ссылка на блог",
+        },
+        3: {  # Блок 3: Бэкграунд в НШМ
+            0: "Участник каких меро",
+            1: "Цель в комьюнити",
+            2: "Амбассадор (советую проект)",
+        },
+        4: {  # Блок 4: Твой вайб
+            0: "новости",
+            1: "блогеры",
+            2: "соцсети где сидит",
+            3: "3 канала в ТГ, ютубе и ВК",
+            4: "исполнители",
+        },
+        5: {  # Блок 5: Level Up
+            0: "Знания, которых не хватило",
+            1: "Нужная тема курса",
+        },
+    }
 
     def __init__(self, credentials_path: str = None):
         self.sheets_id = SHEETS_ID
         self.service = None
         self.db = Database()
-        self._columns_ensured = False
         self.init_service(credentials_path)
 
-    def _ensure_grid_columns(self):
-        """Make sure the Резиденты sheet is wide enough (>= MIN_COLUMNS).
+    # ── helpers ──────────────────────────────────────────────────────────────
+    @staticmethod
+    def _col_letter(n: int) -> str:
+        """1-based column index -> A1 letter (1->A, 27->AA)."""
+        s = ""
+        while n > 0:
+            n, r = divmod(n - 1, 26)
+            s = chr(65 + r) + s
+        return s
 
-        Self-healing: if the sheet ever has too few columns (which is what broke
-        sync when the tg_id key column AA did not exist), expand it automatically.
-        Cached so the metadata call runs at most once per process.
-        """
-        if not self.service or self._columns_ensured:
-            return
+    def _header_map(self) -> Dict[str, int]:
+        """{header name: 1-based column index} from row 1 of the Резиденты sheet."""
+        res = self.service.spreadsheets().values().get(
+            spreadsheetId=self.sheets_id, range=f"{self.RESIDENTS_SHEET}!1:1"
+        ).execute()
+        rows = res.get("values", [])
+        headers = rows[0] if rows else []
+        return {str(h).strip(): i + 1 for i, h in enumerate(headers) if str(h).strip()}
+
+    def _ensure_grid_columns(self, min_cols: int):
+        """Make sure the sheet has at least `min_cols` columns (grow if needed)."""
         try:
             meta = self.service.spreadsheets().get(spreadsheetId=self.sheets_id).execute()
             for s in meta.get("sheets", []):
                 p = s.get("properties", {})
                 if p.get("title") == self.RESIDENTS_SHEET:
                     cc = p.get("gridProperties", {}).get("columnCount", 0)
-                    if cc < self.MIN_COLUMNS:
+                    if cc < min_cols:
                         self.service.spreadsheets().batchUpdate(
                             spreadsheetId=self.sheets_id,
                             body={"requests": [{"appendDimension": {
                                 "sheetId": p.get("sheetId"),
                                 "dimension": "COLUMNS",
-                                "length": self.MIN_COLUMNS - cc,
+                                "length": min_cols - cc,
                             }}]},
                         ).execute()
-                        logger.info(f"Expanded {self.RESIDENTS_SHEET} sheet to {self.MIN_COLUMNS} columns")
-                    self._columns_ensured = True
+                        logger.info(f"Expanded {self.RESIDENTS_SHEET} to {min_cols} columns")
                     return
         except Exception as e:
             logger.error(f"Could not ensure grid columns: {e}")
 
+    def _ensure_header(self, name: str, hmap: Dict[str, int] = None) -> Optional[int]:
+        """Return the 1-based column index of header `name`, creating it if missing.
+
+        Only used for the technical tg_id column, so the key column self-heals
+        even if someone deletes it.
+        """
+        if hmap is None:
+            hmap = self._header_map()
+        if name in hmap:
+            return hmap[name]
+        col_idx = (max(hmap.values()) if hmap else 0) + 1
+        self._ensure_grid_columns(col_idx)
+        try:
+            self.service.spreadsheets().values().update(
+                spreadsheetId=self.sheets_id,
+                range=f"{self.RESIDENTS_SHEET}!{self._col_letter(col_idx)}1",
+                valueInputOption="RAW", body={"values": [[name]]},
+            ).execute()
+            logger.info(f"Created missing column '{name}' at {self._col_letter(col_idx)}")
+            return col_idx
+        except Exception as e:
+            logger.error(f"Could not create column '{name}': {e}")
+            return None
+
     def _write_updates(self, updates):
         """Write a batch of cell updates, self-healing on grid-limit errors."""
+        if not updates:
+            return
         body = {"data": updates, "valueInputOption": "RAW"}
         try:
             self.service.spreadsheets().values().batchUpdate(
                 spreadsheetId=self.sheets_id, body=body
             ).execute()
         except Exception as e:
-            # A too-small grid raises "exceeds grid limits" — expand and retry once.
             if "grid limit" in str(e).lower() or "exceeds" in str(e).lower():
-                logger.warning("Write hit grid limits — expanding sheet and retrying")
-                self._columns_ensured = False
-                self._ensure_grid_columns()
+                # Grow enough to cover the widest range we tried to write, then retry.
+                want = 0
+                for u in updates:
+                    rng = u.get("range", "")
+                    letters = "".join(ch for ch in rng.split("!")[-1] if ch.isalpha())
+                    if letters:
+                        n = 0
+                        for ch in letters:
+                            n = n * 26 + (ord(ch.upper()) - 64)
+                        want = max(want, n)
+                logger.warning(f"Write hit grid limits — expanding to {want} cols and retrying")
+                self._ensure_grid_columns(want)
                 self.service.spreadsheets().values().batchUpdate(
                     spreadsheetId=self.sheets_id, body=body
                 ).execute()
@@ -117,17 +201,14 @@ class SheetsService:
         """Get rules blocks from 'Правила' sheet"""
         if not self.service:
             return {}
-
         try:
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=self.sheets_id,
                 range="Правила!A:C"
             ).execute()
-
             values = result.get('values', [])
             if not values or len(values) <= 1:
                 return {}
-
             rules = {}
             for row in values[1:]:
                 if len(row) >= 3:
@@ -136,7 +217,6 @@ class SheetsService:
                     text = str(row[2]).strip() if len(row) > 2 else ""
                     if block_num and title and text:
                         rules[block_num] = {"title": title, "text": text}
-
             logger.info(f"Loaded {len(rules)} rule blocks")
             return rules
         except Exception as e:
@@ -147,17 +227,14 @@ class SheetsService:
         """Get content (welcome messages, circles) from 'Контент' sheet"""
         if not self.service:
             return {}
-
         try:
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=self.sheets_id,
                 range="Контент!A:C"
             ).execute()
-
             values = result.get('values', [])
             if not values or len(values) <= 1:
                 return {}
-
             content = {}
             for row in values[1:]:
                 if len(row) >= 3:
@@ -166,96 +243,94 @@ class SheetsService:
                     text = str(row[2]).strip() if len(row) > 2 else ""
                     if content_id and text:
                         content[content_id] = {"block": block, "text": text}
-
             logger.info(f"Loaded {len(content)} content items")
             return content
         except Exception as e:
             logger.error(f"Error getting content: {e}")
             return {}
 
-    def find_resident_row_by_user_id(self, user_id: int) -> Optional[int]:
-        """Find a resident row by the Telegram user id stamped in column AA.
+    # ── row lookup / creation ────────────────────────────────────────────────
+    def find_resident_row_by_user_id(self, user_id: int, hmap: Dict[str, int] = None) -> Optional[int]:
+        """Find a resident row by the Telegram user id in the tg_id column.
 
-        This is the stable key: survey answers never write to AA, so a resident
-        who stops mid-survey and comes back later keeps filling the same row.
+        Stable key: survey answers never write to tg_id, so a resident who comes
+        back later keeps filling the same row. Column found by HEADER NAME.
         """
         if not self.service:
             return None
-
         try:
+            if hmap is None:
+                hmap = self._header_map()
+            col = hmap.get(self.TG_ID_HEADER)
+            if not col:
+                return None
+            letter = self._col_letter(col)
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=self.sheets_id,
-                range="Резиденты!AA:AA"
+                range=f"{self.RESIDENTS_SHEET}!{letter}:{letter}"
             ).execute()
-
             target = str(user_id)
             for idx, row in enumerate(result.get('values', [])[1:], 2):
                 if row and str(row[0]).strip() == target:
                     return idx
-
             return None
         except Exception as e:
             logger.error(f"Error finding resident by user_id: {e}")
             return None
 
-    def find_resident_row_by_name(self, first_name: str, last_name: str) -> Optional[int]:
-        """Find an existing resident row by name.
-
-        Column A holds "Имя + фамилия", so match on the set of name parts rather
-        than on exact cell equality (the order differs between the sheet and
-        Telegram profiles).
-        """
+    def find_resident_row_by_name(self, first_name: str, last_name: str, hmap: Dict[str, int] = None) -> Optional[int]:
+        """Find an existing resident row by name (matches on the set of name parts)."""
         if not self.service:
             return None
-
         wanted = set((first_name or "").strip().lower().split())
         wanted |= set((last_name or "").strip().lower().split())
         if not wanted:
             return None
-
         try:
+            if hmap is None:
+                hmap = self._header_map()
+            col = hmap.get(self.NAME_HEADER, 1)
+            letter = self._col_letter(col)
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=self.sheets_id,
-                range="Резиденты!A:A"
+                range=f"{self.RESIDENTS_SHEET}!{letter}:{letter}"
             ).execute()
-
             for idx, row in enumerate(result.get('values', [])[1:], 2):
                 full_name = str(row[0]).strip().lower() if row else ""
                 if full_name and wanted.issubset(set(full_name.split())):
                     return idx
-
             return None
         except Exception as e:
             logger.error(f"Error finding resident: {e}")
             return None
 
-    def add_resident_row(self, first_name: str, last_name: str) -> Optional[int]:
-        """Add new resident row and return row number"""
+    def add_resident_row(self, user_id: int, first_name: str, last_name: str, hmap: Dict[str, int] = None) -> Optional[int]:
+        """Append a new resident row (name + tg_id) and return its row number."""
         if not self.service:
             return None
-
         try:
-            # Get current data to find next empty row
+            if hmap is None:
+                hmap = self._header_map()
+            name_col = hmap.get(self.NAME_HEADER, 1)
+            name_letter = self._col_letter(name_col)
+            # Next empty row = one past the last non-empty name cell.
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=self.sheets_id,
-                range="Резиденты!A:A"
+                range=f"{self.RESIDENTS_SHEET}!{name_letter}:{name_letter}"
             ).execute()
+            next_row = len(result.get('values', [])) + 1
 
-            values = result.get('values', [])
-            next_row = len(values) + 1
-
-            # Column A is "Имя + фамилия", B is "Только фамилия". Leave C alone —
-            # that is "Регион" and the survey fills it in.
-            row_data = [f"{first_name} {last_name}".strip(), last_name]
-
-            # Insert the row
-            self.service.spreadsheets().values().update(
-                spreadsheetId=self.sheets_id,
-                range=f"Резиденты!A{next_row}:B{next_row}",
-                valueInputOption="RAW",
-                body={"values": [row_data]}
-            ).execute()
-
+            updates = [{
+                "range": f"{self.RESIDENTS_SHEET}!{name_letter}{next_row}",
+                "values": [[f"{first_name} {last_name}".strip()]],
+            }]
+            tg_col = self._ensure_header(self.TG_ID_HEADER, hmap)
+            if tg_col:
+                updates.append({
+                    "range": f"{self.RESIDENTS_SHEET}!{self._col_letter(tg_col)}{next_row}",
+                    "values": [[str(user_id)]],
+                })
+            self._write_updates(updates)
             logger.info(f"Added new resident row {next_row}: {first_name} {last_name}")
             return next_row
         except Exception as e:
@@ -263,10 +338,9 @@ class SheetsService:
             return None
 
     def sync_survey_responses(self, user_id: int, responses: List[Dict]) -> bool:
-        """Sync survey responses to resident row"""
+        """Sync survey responses to the resident's row (columns matched by header name)."""
         if not self.service or not responses:
             return False
-
         try:
             user_info = self.db.get_user(user_id)
             if not user_info:
@@ -276,88 +350,53 @@ class SheetsService:
             first_name = user_info.get("first_name", "")
             last_name = user_info.get("last_name", "")
 
-            # Find or create the resident row. The user id in column AA is the
-            # stable key, so a resident who returns to finish the survey later
-            # keeps writing into the same row even after their answers have
-            # overwritten the name columns.
-            # Make sure the grid is wide enough before we touch column AA.
-            self._ensure_grid_columns()
+            hmap = self._header_map()
+            # tg_id column must exist so the row stays findable next time.
+            if self.TG_ID_HEADER not in hmap:
+                self._ensure_header(self.TG_ID_HEADER, hmap)
+                hmap = self._header_map()
 
-            row_num = self.find_resident_row_by_user_id(user_id)
+            # Resolve the row: tg_id first (stable), then name, then create.
+            row_num = self.find_resident_row_by_user_id(user_id, hmap)
             if not row_num:
-                row_num = self.find_resident_row_by_name(first_name, last_name)
+                row_num = self.find_resident_row_by_name(first_name, last_name, hmap)
             if not row_num:
-                row_num = self.add_resident_row(first_name, last_name)
+                row_num = self.add_resident_row(user_id, first_name, last_name, hmap)
+                hmap = self._header_map()  # columns may have changed on create
 
             if not row_num:
                 logger.error(f"Could not find or create row for {first_name} {last_name}")
                 return False
 
-            # Map survey responses to columns (по структуре таблицы)
-            column_map = {
-                1: {  # Блок 1: Твоё ID (6 вопросов)
-                    0: "A",  # Q1: Как тебя зовут → Имя
-                    1: "H",  # Q2: Когда ДР → День рождения
-                    2: "I",  # Q3: Телефон → Телефон
-                    3: "E",  # Q4: Ник Telegram → Ник в Telegram
-                    4: "D",  # Q5: ВК профиль → Профиль в ВК
-                    5: "C"   # Q6: Регион → Регион
-                },
-                2: {  # Блок 2: Твой путь (5 вопросов)
-                    0: "J",  # Q1: Учеба → Учеба
-                    1: "K",  # Q2: Профессия → Профессия
-                    2: "L",  # Q3: Работаешь ли → Статус работы
-                    3: "M",  # Q4: Где работает → Место работы
-                    4: "N"   # Q5: Блог → Ссылка на блог
-                },
-                3: {  # Блок 3: Бэкграунд в НШМ (3 вопроса)
-                    0: "F",  # Q1: Марафоны → Участник каких меро
-                    1: "P",  # Q2: Цель → Цель в комьюнити
-                    2: "Q"   # Q3: Амбассадор (0-10) → Амбассадор
-                },
-                4: {  # Блок 4: Твой вайб (5 вопросов)
-                    0: "X",  # Q1: Новости
-                    1: "Y",  # Q2: Блогеры
-                    2: "Z",  # Q3: Соцсети
-                    3: "T",  # Q4: Топ-3 TG/YouTube/ВК каналов
-                    4: "W"   # Q5: Исполнители (что слушаешь)
-                },
-                5: {  # Блок 5: Level Up (2 вопроса)
-                    0: "R",  # Q1: Знания → Знания, которых не хватило
-                    1: "S"   # Q2: Курс → Нужная тема курса
-                }
-            }
-
-            # Collect updates
             updates = []
+            # Always (re)stamp tg_id on the row.
+            tg_col = hmap.get(self.TG_ID_HEADER)
+            if tg_col:
+                updates.append({
+                    "range": f"{self.RESIDENTS_SHEET}!{self._col_letter(tg_col)}{row_num}",
+                    "values": [[str(user_id)]],
+                })
 
-            # Stamp the Telegram user id so every later answer resolves to this
-            # exact row. Name columns are left to the survey answers themselves.
-            updates.append({
-                "range": f"Резиденты!AA{row_num}",
-                "values": [[str(user_id)]]
-            })
-
-            # Add survey responses
+            # Map each answer to its column BY HEADER NAME.
             for response in responses:
                 block = response["block_number"]
                 q_idx = response.get("question_index", 0)
                 answer = response["answer"]
+                header = self.COLUMN_MAP.get(block, {}).get(q_idx)
+                if not header:
+                    continue
+                col = hmap.get(header)
+                if not col:
+                    logger.warning(f"Column '{header}' not found in sheet — skipping this answer")
+                    continue
+                updates.append({
+                    "range": f"{self.RESIDENTS_SHEET}!{self._col_letter(col)}{row_num}",
+                    "values": [[answer]],
+                })
 
-                if block in column_map and q_idx in column_map[block]:
-                    col = column_map[block][q_idx]
-                    cell_range = f"Резиденты!{col}{row_num}"
-                    updates.append({
-                        "range": cell_range,
-                        "values": [[answer]]
-                    })
-
-            # Execute batch update (self-healing on grid-limit errors)
             if updates:
                 self._write_updates(updates)
-                logger.info(f"Synced {len(updates)} responses for user {user_id} (row {row_num})")
-                return True
-
+                logger.info(f"Synced {len(updates)} cells for user {user_id} (row {row_num})")
             return True
         except Exception as e:
             logger.error(f"Error syncing survey responses: {e}")
