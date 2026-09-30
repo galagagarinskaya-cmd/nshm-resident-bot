@@ -187,6 +187,15 @@ class Database:
         conn.commit()
         conn.close()
 
+    def get_accepted_user_ids(self) -> List[int]:
+        """All user_ids who have accepted the rules (used to re-open access)."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id FROM users WHERE rules_accepted = 1")
+        results = cursor.fetchall()
+        conn.close()
+        return [row[0] for row in results]
+
     def get_users_for_survey(self) -> List[int]:
         """Get users who need to receive survey"""
         conn = sqlite3.connect(self.db_path)
