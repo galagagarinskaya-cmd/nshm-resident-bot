@@ -8,6 +8,7 @@ import json
 from apscheduler.schedulers.background import BackgroundScheduler
 import pytz
 import threading
+import asyncio
 
 from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ADMIN_IDS, SHEETS_CREDENTIALS_PATH, SURVEY_DELAY_DAYS, FLASK_PORT
 from database import Database
@@ -198,6 +199,32 @@ async def show_rule_card(update: Update, context: ContextTypes.DEFAULT_TYPE, blo
         reply_markup=reply_markup
     )
 
+async def unlock_member(context: ContextTypes.DEFAULT_TYPE, user_id: int, retries: int = 3) -> bool:
+    """Grant a member full send permissions. Retries so a transient Telegram
+    error (or a click that landed during a redeploy) doesn't leave the resident
+    silently locked out."""
+    perms = ChatPermissions(
+        can_send_messages=True,
+        can_send_media_messages=True,
+        can_send_other_messages=True,
+        can_add_web_page_previews=True,
+        can_send_polls=True,
+        can_manage_topics=True,
+    )
+    for attempt in range(1, retries + 1):
+        try:
+            await context.bot.restrict_chat_member(
+                chat_id=TELEGRAM_CHAT_ID, user_id=user_id, permissions=perms
+            )
+            logger.info(f"✅ Unlocked user {user_id} (attempt {attempt})")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Unlock attempt {attempt}/{retries} failed for {user_id}: {e}")
+            if attempt < retries:
+                await asyncio.sleep(1.5)
+    return False
+
+
 async def accept_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Accept rule block and move to next"""
     query = update.callback_query
@@ -206,25 +233,20 @@ async def accept_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if block_num == 4:
-        # All rules accepted - UNLOCK
+        # All rules accepted - UNLOCK (with retries)
         db.accept_rules(user_id)
 
-        try:
-            await context.bot.restrict_chat_member(
-                chat_id=TELEGRAM_CHAT_ID,
-                user_id=user_id,
-                permissions=ChatPermissions(
-                    can_send_messages=True,
-                    can_send_media_messages=True,
-                    can_send_other_messages=True,
-                    can_add_web_page_previews=True,
-                    can_send_polls=True,
-                    can_manage_topics=True
-                )
-            )
-            logger.info(f"✅ Unlocked user {user_id}")
-        except Exception as e:
-            logger.error(f"❌ Error unlocking: {e}")
+        if not await unlock_member(context, user_id):
+            # Persistent failure — alert admins so a human can /openall or fix rights.
+            for admin_id in TELEGRAM_ADMIN_IDS:
+                try:
+                    await context.bot.send_message(
+                        admin_id,
+                        f"⚠️ Не удалось открыть доступ резиденту {user_id} после правил. "
+                        f"Проверь права бота в чате или запусти /openall."
+                    )
+                except Exception:
+                    pass
 
         # First message — welcome to community
         welcome_message = "Кайфы! Теперь для тебя всё открыто! Если будут вопросы — пиши в чатик или в @info_nshm, велком ту зе клаб 🫶"
@@ -249,6 +271,28 @@ async def accept_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         # Show next block
         await show_rule_card(update, context, block_num=block_num + 1, card_index=0)
+
+
+async def openall(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: re-open access for everyone who has accepted the rules.
+    Fixes residents whose one-time unlock failed."""
+    user = update.effective_user
+    if user.id not in TELEGRAM_ADMIN_IDS:
+        await update.message.reply_text("❌ Команда только для админов")
+        return
+
+    ids = db.get_accepted_user_ids()
+    await update.message.reply_text(f"🔓 Открываю доступ {len(ids)} резидентам, это займёт минуту…")
+    ok = fail = 0
+    for uid in ids:
+        if await unlock_member(context, uid, retries=1):
+            ok += 1
+        else:
+            fail += 1
+    await update.message.reply_text(
+        f"✅ Готово.\nОткрыто: {ok}\nНе удалось: {fail} "
+        f"(обычно это те, кто вышел из чата — это норм)"
+    )
 
 # ============= BOT START HANDLER =============
 async def bot_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -499,6 +543,7 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("restart", restart))
     application.add_handler(CommandHandler("resync", resync))
+    application.add_handler(CommandHandler("openall", openall))
     application.add_handler(CommandHandler("announce_rules", announce_rules))
     application.add_handler(CallbackQueryHandler(bot_start_handler, pattern="^bot_start$"))
     application.add_handler(CallbackQueryHandler(start_rules, pattern="^start_rules$"))
