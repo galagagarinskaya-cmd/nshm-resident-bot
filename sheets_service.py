@@ -126,15 +126,48 @@ class SheetsService:
             logger.error(f"Could not create column '{name}': {e}")
             return None
 
+    def _batch_update(self, body):
+        """Run a values.batchUpdate with backoff on rate-limit (429) errors."""
+        import time as _t
+        for attempt in range(6):
+            try:
+                self.service.spreadsheets().values().batchUpdate(
+                    spreadsheetId=self.sheets_id, body=body
+                ).execute()
+                return
+            except Exception as e:
+                s = str(e).lower()
+                if ("429" in s or "rate limit" in s or "quota" in s or "rateLimitExceeded".lower() in s) and attempt < 5:
+                    wait = min(2 ** attempt * 2, 30)
+                    logger.warning(f"Sheets 429 — backing off {wait}s (attempt {attempt + 1})")
+                    _t.sleep(wait)
+                    continue
+                raise
+
+    def _read_values(self, a1_range):
+        """values.get with backoff on 429."""
+        import time as _t
+        for attempt in range(6):
+            try:
+                return self.service.spreadsheets().values().get(
+                    spreadsheetId=self.sheets_id, range=a1_range
+                ).execute()
+            except Exception as e:
+                s = str(e).lower()
+                if ("429" in s or "rate limit" in s or "quota" in s) and attempt < 5:
+                    wait = min(2 ** attempt * 2, 30)
+                    logger.warning(f"Sheets 429 (read) — backing off {wait}s")
+                    _t.sleep(wait)
+                    continue
+                raise
+
     def _write_updates(self, updates):
-        """Write a batch of cell updates, self-healing on grid-limit errors."""
+        """Write a batch of cell updates, self-healing on grid-limit + 429 errors."""
         if not updates:
             return
         body = {"data": updates, "valueInputOption": "RAW"}
         try:
-            self.service.spreadsheets().values().batchUpdate(
-                spreadsheetId=self.sheets_id, body=body
-            ).execute()
+            self._batch_update(body)
         except Exception as e:
             if "grid limit" in str(e).lower() or "exceeds" in str(e).lower():
                 # Grow enough to cover the widest range we tried to write, then retry.
@@ -149,9 +182,7 @@ class SheetsService:
                         want = max(want, n)
                 logger.warning(f"Write hit grid limits — expanding to {want} cols and retrying")
                 self._ensure_grid_columns(want)
-                self.service.spreadsheets().values().batchUpdate(
-                    spreadsheetId=self.sheets_id, body=body
-                ).execute()
+                self._batch_update(body)
             else:
                 raise
 
@@ -401,3 +432,94 @@ class SheetsService:
         except Exception as e:
             logger.error(f"Error syncing survey responses: {e}")
             return False
+
+    def bulk_sync(self, users) -> int:
+        """Sync many residents in ONE pass — a few API calls total, 429-safe.
+
+        `users`: iterable of (user_id, first_name, last_name, responses).
+        Reads the sheet once, builds an in-memory row index (by tg_id, then by
+        name), assigns new rows for residents not yet in the sheet, and writes
+        everything in chunked batch updates. Returns how many were synced.
+        """
+        if not self.service:
+            return 0
+        users = list(users)
+        try:
+            hmap = self._header_map()
+            if self.TG_ID_HEADER not in hmap:
+                self._ensure_header(self.TG_ID_HEADER, hmap)
+                hmap = self._header_map()
+            tg_col = hmap[self.TG_ID_HEADER]
+            name_col = hmap.get(self.NAME_HEADER, 1)
+
+            tg_vals = self._read_values(
+                f"{self.RESIDENTS_SHEET}!{self._col_letter(tg_col)}:{self._col_letter(tg_col)}"
+            ).get("values", [])
+            name_vals = self._read_values(
+                f"{self.RESIDENTS_SHEET}!{self._col_letter(name_col)}:{self._col_letter(name_col)}"
+            ).get("values", [])
+
+            def norm(s):
+                return " ".join(sorted(str(s).strip().lower().split()))
+
+            tg_index = {}
+            for i, r in enumerate(tg_vals):
+                if i == 0:
+                    continue
+                v = str(r[0]).strip() if r else ""
+                if v:
+                    tg_index[v] = i + 1
+            name_index = {}
+            for i, r in enumerate(name_vals):
+                if i == 0:
+                    continue
+                n = norm(r[0]) if r else ""
+                if n and n not in name_index:
+                    name_index[n] = i + 1
+
+            next_row = max(len(tg_vals), len(name_vals), 1) + 1
+
+            updates = []
+            ok = 0
+            for uid, first, last, responses in users:
+                suid = str(uid)
+                full = f"{first} {last}".strip()
+                row = tg_index.get(suid)
+                if not row and full:
+                    row = name_index.get(norm(full))
+                if not row:
+                    row = next_row
+                    next_row += 1
+                    if full:
+                        updates.append({
+                            "range": f"{self.RESIDENTS_SHEET}!{self._col_letter(name_col)}{row}",
+                            "values": [[full]],
+                        })
+                        name_index[norm(full)] = row
+                tg_index[suid] = row
+                updates.append({
+                    "range": f"{self.RESIDENTS_SHEET}!{self._col_letter(tg_col)}{row}",
+                    "values": [[suid]],
+                })
+                for resp in (responses or []):
+                    header = self.COLUMN_MAP.get(resp["block_number"], {}).get(resp.get("question_index", 0))
+                    if not header:
+                        continue
+                    col = hmap.get(header)
+                    if not col:
+                        continue
+                    updates.append({
+                        "range": f"{self.RESIDENTS_SHEET}!{self._col_letter(col)}{row}",
+                        "values": [[resp["answer"]]],
+                    })
+                ok += 1
+
+            CHUNK = 500
+            for i in range(0, len(updates), CHUNK):
+                self._write_updates(updates[i:i + CHUNK])
+
+            logger.info(f"bulk_sync: {ok} residents, {len(updates)} cell writes")
+            return ok
+        except Exception as e:
+            logger.error(f"bulk_sync failed: {e}")
+            return 0
