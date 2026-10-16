@@ -389,17 +389,18 @@ async def resync(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🔄 Синхронизирую {len(user_ids)} резидент(ов) с таблицей...")
     logger.info(f"🔄 Admin {user_id} started full resync of {len(user_ids)} users")
 
-    ok, fail = 0, 0
+    # Build the full dataset once, then sync in a single batched pass so we
+    # don't hammer the Sheets API (the old per-user loop hit 429 rate limits).
+    users = []
     for uid in user_ids:
-        try:
-            responses = db.get_survey_responses(uid)
-            if responses and sheets.sync_survey_responses(uid, responses):
-                ok += 1
-            else:
-                fail += 1
-        except Exception as e:
-            logger.error(f"Resync failed for user {uid}: {e}")
-            fail += 1
+        info = db.get_user(uid)
+        responses = db.get_survey_responses(uid)
+        first = info.get("first_name", "") if info else ""
+        last = info.get("last_name", "") if info else ""
+        users.append((uid, first, last, responses))
+
+    ok = sheets.bulk_sync(users)
+    fail = len(users) - ok
 
     await update.message.reply_text(f"✅ Готово!\n\nСинхронизировано: {ok}\nНе удалось: {fail}")
     logger.info(f"✅ Resync done: ok={ok}, fail={fail}")
